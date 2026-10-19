@@ -1,0 +1,95 @@
+/** Supervisor monitoring. Civil IDs stay on the server and are never returned to the browser. */
+const MONITOR_SHEET = 'المشرفين';
+const MONITOR_HEADERS = ['الاسم','السجل المدني','الصلاحية'];
+
+// Run once from the Apps Script editor. Existing cells and column positions are preserved.
+function setupMonitoring_() {
+  const lock=LockService.getScriptLock();lock.waitLock(10000);
+  try {
+    const ss=db_();
+    const supervisors=ss.getSheetByName(MONITOR_SHEET)||ss.insertSheet(MONITOR_SHEET);
+    ensureMonitoringHeaders_(supervisors,MONITOR_HEADERS);
+    ensureMonitoringHeaders_(sheet_(SHEETS.schools),['المشرف','السجل المدني']);
+    for(const sh of [supervisors,sheet_(SHEETS.schools)]){
+      const headers=sh.getRange(1,1,1,sh.getLastColumn()).getDisplayValues()[0];
+      const civil=headers.indexOf('السجل المدني');
+      if(civil>=0)sh.getRange(2,civil+1,Math.max(1,sh.getMaxRows()-1),1).setNumberFormat('@');
+      sh.setRightToLeft(true);sh.setFrozenRows(1);
+    }
+    return 'تم تجهيز ورقة المشرفين وعمودي المشرف والسجل المدني في المدارس دون تغيير البيانات الحالية';
+  }finally{lock.releaseLock();}
+}
+function ensureMonitoringHeaders_(sh,required){
+  const existing=sh.getLastColumn()?sh.getRange(1,1,1,sh.getLastColumn()).getDisplayValues()[0]:[];
+  for(const header of required){
+    if(existing.filter(value=>String(value).trim()===header).length>1)throw Error('عمود مكرر: '+header);
+    if(!existing.some(value=>String(value).trim()===header)){
+      existing.push(header);
+      if(sh.getMaxColumns()<existing.length)sh.insertColumnsAfter(sh.getMaxColumns(),existing.length-sh.getMaxColumns());
+      sh.getRange(1,existing.length).setValue(header).setBackground('#087b69').setFontColor('#ffffff').setFontWeight('bold');
+    }
+  }
+}
+function monitoringCivil_(value){return normalizeCode_(value);}
+function monitoringRows_(name,required){
+  const sh=sheet_(name),width=sh.getLastColumn();
+  if(!width)throw Error('يجب تجهيز أعمدة المتابعة أولاً');
+  const headers=sh.getRange(1,1,1,width).getDisplayValues()[0].map(value=>String(value).trim());
+  const columns={};
+  for(const header of required){
+    if(headers.filter(value=>value===header).length!==1)throw Error('تحقق من عمود '+header+' في ورقة '+name);
+    columns[header]=headers.indexOf(header);
+  }
+  const rows=sh.getLastRow()>1?sh.getRange(2,1,sh.getLastRow()-1,width).getDisplayValues().filter(row=>row.some(Boolean)):[];
+  return {rows,columns};
+}
+function monitoringAccounts_(){
+  const table=monitoringRows_(MONITOR_SHEET,MONITOR_HEADERS),c=table.columns;
+  const accounts=table.rows.map((row,i)=>({key:'supervisor_'+i,name:String(row[c['الاسم']]||'').trim(),civil:monitoringCivil_(row[c['السجل المدني']]),role:String(row[c['الصلاحية']]||'').trim()}));
+  const seen=new Set();
+  for(const account of accounts){
+    if(!account.name||!/^\d{10}$/.test(account.civil)||!['مشرف','مدير النظام'].includes(account.role))throw Error('تحقق من الاسم والسجل المدني والصلاحية في ورقة المشرفين');
+    if(seen.has(account.civil))throw Error('يوجد سجل مدني مكرر في ورقة المشرفين');
+    seen.add(account.civil);
+  }
+  return accounts;
+}
+function monitoringSessionKey_(token){return 'monitor_'+hash_(String(token||''));}
+function loginSupervisor(civil){
+  civil=monitoringCivil_(civil);
+  if(!/^\d{10}$/.test(civil))throw Error('أدخل سجلاً مدنياً صحيحاً من 10 أرقام');
+  const account=monitoringAccounts_().find(item=>item.civil===civil);
+  if(!account)throw Error('لا يوجد حساب متابعة مسجل بهذه البيانات');
+  const token=Utilities.getUuid()+Utilities.getUuid();
+  const result=monitoringData_(account);
+  CacheService.getScriptCache().put(monitoringSessionKey_(token),civil,21600);
+  return {token,data:result};
+}
+function getMonitoring(token){
+  const civil=CacheService.getScriptCache().get(monitoringSessionKey_(token));
+  if(!civil)throw Error('انتهت جلسة المتابعة؛ سجل الدخول مجدداً');
+  const account=monitoringAccounts_().find(item=>item.civil===civil);
+  if(!account)throw Error('لم تعد صلاحية المتابعة متاحة لهذا الحساب');
+  return monitoringData_(account);
+}
+function logoutSupervisor(token){CacheService.getScriptCache().remove(monitoringSessionKey_(token));return true;}
+function monitoringData_(account){
+  const table=monitoringRows_(SHEETS.schools,['معرف السجل','اسم المدرسة','اسم مدير المدرسة','المحافظة','جوال مدير المدرسة','المشرف','السجل المدني']),c=table.columns;
+  const accounts=monitoringAccounts_(),byCivil=new Map(accounts.map(item=>[item.civil,item]));
+  const statuses=new Map(records_(SHEETS.status).map(item=>[item.values[0],item.values[1]]));
+  const isManager=account.role==='مدير النظام';
+  const schools=[];
+  for(const row of table.rows){
+    const civil=monitoringCivil_(row[c['السجل المدني']]);
+    if(!isManager&&civil!==account.civil)continue;
+    const owner=byCivil.get(civil);
+    schools.push({id:row[c['معرف السجل']],name:row[c['اسم المدرسة']],principal:row[c['اسم مدير المدرسة']],governorate:row[c['المحافظة']],mobile:row[c['جوال مدير المدرسة']],supervisor:owner?owner.name:String(row[c['المشرف']]||''),supervisorKey:owner?owner.key:'unassigned',status:statuses.get(row[c['معرف السجل']])||'لم يبدأ'});
+  }
+  const summarize=list=>{const complete=list.filter(item=>item.status==='مكتمل').length;return {total:list.length,complete,remaining:list.length-complete,percent:list.length?Math.round(complete/list.length*100):0};};
+  const result={user:{name:account.name,role:account.role},stats:summarize(schools),schools};
+  if(isManager){
+    result.supervisors=accounts.map(owner=>({key:owner.key,name:owner.name,role:owner.role,...summarize(schools.filter(item=>item.supervisorKey===owner.key))}));
+    result.unassigned=summarize(schools.filter(item=>item.supervisorKey==='unassigned'));
+  }
+  return result;
+}

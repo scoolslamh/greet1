@@ -15,7 +15,7 @@ function apiContext() {
     db_() { return { getSheetByName() { return {}; } }; },
     SHEETS: { schools: 'schools' }
   };
-  for (const name of ['loginByCode', 'getData', 'saveSchool', 'saveGuards', 'saveCoverage', 'approve']) {
+  for (const name of ['loginByCode', 'getData', 'saveSchool', 'saveGuards', 'saveCoverage', 'approve', 'loginSupervisor', 'getMonitoring', 'logoutSupervisor']) {
     context[name] = (...args) => { calls.push({ name, args }); return { name, args }; };
   }
   vm.createContext(context);
@@ -87,6 +87,7 @@ test('interface dispatches native Google calls or the static transport and prese
   const element = { addEventListener() {} };
   let opened;
   const ctx = vm.createContext({
+    clearTimeout() {}, setTimeout() {},
     window: { schoolBackend: { endpoint: 'https://example.test/exec', call: async (name, args) => ({ name, args }) }, open(...args) { opened = args; } },
     document: { getElementById() { return element; } }
   });
@@ -94,7 +95,7 @@ test('interface dispatches native Google calls or the static transport and prese
   const response = await vm.runInContext("run('getData','session')", ctx);
   assert.equal(response.name, 'getData');
   await ctx.showDashboard();
-  assert.equal(opened[0], 'https://example.test/exec?admin=1');
+  assert.equal(opened[0], 'https://scoolslamh.github.io/greet1/monitor.html');
   assert.equal(opened[2], 'noopener,noreferrer');
   ctx.google = ctx.window.google = { script: { run: {
     withSuccessHandler(handler) { this.handler = handler; return this; },
@@ -107,7 +108,7 @@ test('interface dispatches native Google calls or the static transport and prese
 test('Pages artifact has a lowercase entrypoint and only public frontend files', () => {
   require('../scripts/build-pages.cjs');
   const files = fs.readdirSync(path.join(root, '_site')).sort();
-  assert.deepEqual(files, ['.nojekyll', 'index.html', 'web-client.js']);
+  assert.deepEqual(files, ['.nojekyll', 'index.html', 'monitor.html', 'web-client.js']);
   const output = fs.readFileSync(path.join(root, '_site/index.html'), 'utf8');
   assert.ok(output.includes('<script src="./web-client.js" defer></script>'));
   assert.ok(!output.includes('???? ?????'));

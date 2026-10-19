@@ -19,9 +19,12 @@ function doPost(e) {
     try { request = JSON.parse(body); }
     catch (_) { throw Error('طلب غير صالح'); }
     if (!request || typeof request !== 'object' || Array.isArray(request)) throw Error('طلب غير صالح');
-    // Never dispatch arbitrary script functions or expose supervisor actions over this API.
+    // Only explicit routes; monitoring functions enforce their own separate sessions and scope.
     const routes = {
       health: { count: 0, call: apiHealth_ },
+      loginSupervisor: { count: 1, call: loginSupervisor },
+      getMonitoring: { count: 1, call: getMonitoring },
+      logoutSupervisor: { count: 1, call: logoutSupervisor },
       loginByCode: { count: 1, call: loginByCode },
       getData: { count: 1, call: getData },
       saveSchool: { count: 2, call: saveSchool },
