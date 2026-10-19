@@ -35,6 +35,20 @@ test('unknown, malformed and duplicate civil IDs cannot log in',()=>{
   const {ctx,accounts}=environment();assert.throws(()=>ctx.loginSupervisor('123'));assert.throws(()=>ctx.loginSupervisor('9999999999'));
   accounts.push(['Duplicate','1000000001','مشرف']);assert.throws(()=>ctx.loginSupervisor('1000000001'));
 });
+test('incomplete unrelated rows do not block valid accounts and whitespace roles normalize',()=>{
+  const {ctx,accounts}=environment();
+  accounts.push(['Incomplete','','']);
+  accounts[1][2]=' \u200fمشرف\u200e ';
+  assert.equal(ctx.loginSupervisor('1000000001').data.stats.total,2);
+  const manager=ctx.loginSupervisor('1000000003').data;
+  assert.equal(manager.accountIssues.length,1);
+  assert.match(manager.accountIssues[0],/الصف 5/);
+});
+test('the matching account gets a precise row and field error without disclosing its civil ID',()=>{
+  const {ctx,accounts}=environment();accounts[1][2]='مدير';
+  assert.throws(()=>ctx.loginSupervisor('1000000001'),error=>error.message.includes('الصف 2')&&error.message.includes('الصلاحية')&&!error.message.includes('1000000001'));
+  assert.equal(ctx.loginSupervisor('1000000002').data.stats.total,1);
+});
 test('contact links accept Saudi mobile numbers and reject executable input',()=>{
   const html=fs.readFileSync('Monitor.html','utf8');const code=[...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi)][0][1];
   const ctx=vm.createContext({window:{},document:{getElementById:()=>({addEventListener(){}})}});vm.runInContext(code,ctx);

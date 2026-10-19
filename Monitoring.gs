@@ -30,7 +30,8 @@ function ensureMonitoringHeaders_(sh,required){
     }
   }
 }
-function monitoringCivil_(value){return normalizeCode_(value);}
+function monitoringText_(value){return String(value||'').replace(/[\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]/g,'').replace(/\s+/g,' ').trim();}
+function monitoringCivil_(value){return normalizeCode_(monitoringText_(value));}
 function monitoringRows_(name,required){
   const sh=sheet_(name),width=sh.getLastColumn();
   if(!width)throw Error('يجب تجهيز أعمدة المتابعة أولاً');
@@ -40,26 +41,36 @@ function monitoringRows_(name,required){
     if(headers.filter(value=>value===header).length!==1)throw Error('تحقق من عمود '+header+' في ورقة '+name);
     columns[header]=headers.indexOf(header);
   }
-  const rows=sh.getLastRow()>1?sh.getRange(2,1,sh.getLastRow()-1,width).getDisplayValues().filter(row=>row.some(Boolean)):[];
-  return {rows,columns};
+  const raw=sh.getLastRow()>1?sh.getRange(2,1,sh.getLastRow()-1,width).getDisplayValues():[];
+  const rows=[],rowNumbers=[];
+  raw.forEach((row,i)=>{if(row.some(value=>monitoringText_(value))){rows.push(row);rowNumbers.push(i+2);}});
+  return {rows,columns,rowNumbers};
 }
 function monitoringAccounts_(){
   const table=monitoringRows_(MONITOR_SHEET,MONITOR_HEADERS),c=table.columns;
-  const accounts=table.rows.map((row,i)=>({key:'supervisor_'+i,name:String(row[c['الاسم']]||'').trim(),civil:monitoringCivil_(row[c['السجل المدني']]),role:String(row[c['الصلاحية']]||'').trim()}));
-  const seen=new Set();
+  const accounts=table.rows.map((row,i)=>({key:'supervisor_'+table.rowNumbers[i],row:table.rowNumbers[i],name:monitoringText_(row[c['الاسم']]),civil:monitoringCivil_(row[c['السجل المدني']]),role:monitoringText_(row[c['الصلاحية']])}));
   for(const account of accounts){
-    if(!account.name||!/^\d{10}$/.test(account.civil)||!['مشرف','مدير النظام'].includes(account.role))throw Error('تحقق من الاسم والسجل المدني والصلاحية في ورقة المشرفين');
-    if(seen.has(account.civil))throw Error('يوجد سجل مدني مكرر في ورقة المشرفين');
-    seen.add(account.civil);
+    const errors=[];
+    if(!account.name)errors.push('الاسم مطلوب');
+    if(!/^\d{10}$/.test(account.civil))errors.push('السجل المدني يجب أن يتكون من 10 أرقام');
+    if(!['مشرف','مدير النظام'].includes(account.role))errors.push('الصلاحية يجب أن تكون مشرف أو مدير النظام');
+    if(account.civil&&accounts.filter(item=>item.civil===account.civil).length>1)errors.push('السجل المدني مكرر');
+    account.error=errors.length?'ورقة المشرفين، الصف '+account.row+': '+errors.join('؛ '):'';
   }
   return accounts;
+}
+function monitoringAccount_(civil){
+  const matches=monitoringAccounts_().filter(item=>item.civil===civil);
+  if(!matches.length)throw Error('لا يوجد حساب متابعة مسجل بهذه البيانات');
+  if(matches.length>1)throw Error('السجل المدني مكرر في ورقة المشرفين؛ راجع الصفوف '+matches.map(item=>item.row).join('، '));
+  if(matches[0].error)throw Error(matches[0].error);
+  return matches[0];
 }
 function monitoringSessionKey_(token){return 'monitor_'+hash_(String(token||''));}
 function loginSupervisor(civil){
   civil=monitoringCivil_(civil);
   if(!/^\d{10}$/.test(civil))throw Error('أدخل سجلاً مدنياً صحيحاً من 10 أرقام');
-  const account=monitoringAccounts_().find(item=>item.civil===civil);
-  if(!account)throw Error('لا يوجد حساب متابعة مسجل بهذه البيانات');
+  const account=monitoringAccount_(civil);
   const token=Utilities.getUuid()+Utilities.getUuid();
   const result=monitoringData_(account);
   CacheService.getScriptCache().put(monitoringSessionKey_(token),civil,21600);
@@ -68,14 +79,13 @@ function loginSupervisor(civil){
 function getMonitoring(token){
   const civil=CacheService.getScriptCache().get(monitoringSessionKey_(token));
   if(!civil)throw Error('انتهت جلسة المتابعة؛ سجل الدخول مجدداً');
-  const account=monitoringAccounts_().find(item=>item.civil===civil);
-  if(!account)throw Error('لم تعد صلاحية المتابعة متاحة لهذا الحساب');
+  const account=monitoringAccount_(civil);
   return monitoringData_(account);
 }
 function logoutSupervisor(token){CacheService.getScriptCache().remove(monitoringSessionKey_(token));return true;}
 function monitoringData_(account){
   const table=monitoringRows_(SHEETS.schools,['معرف السجل','اسم المدرسة','اسم مدير المدرسة','المحافظة','جوال مدير المدرسة','المشرف','السجل المدني']),c=table.columns;
-  const accounts=monitoringAccounts_(),byCivil=new Map(accounts.map(item=>[item.civil,item]));
+  const allAccounts=monitoringAccounts_(),accounts=allAccounts.filter(item=>!item.error),byCivil=new Map(accounts.map(item=>[item.civil,item]));
   const statuses=new Map(records_(SHEETS.status).map(item=>[item.values[0],item.values[1]]));
   const isManager=account.role==='مدير النظام';
   const schools=[];
@@ -88,6 +98,7 @@ function monitoringData_(account){
   const summarize=list=>{const complete=list.filter(item=>item.status==='مكتمل').length;return {total:list.length,complete,remaining:list.length-complete,percent:list.length?Math.round(complete/list.length*100):0};};
   const result={user:{name:account.name,role:account.role},stats:summarize(schools),schools};
   if(isManager){
+    result.accountIssues=allAccounts.filter(item=>item.error).map(item=>item.error);
     result.supervisors=accounts.map(owner=>({key:owner.key,name:owner.name,role:owner.role,...summarize(schools.filter(item=>item.supervisorKey===owner.key))}));
     result.unassigned=summarize(schools.filter(item=>item.supervisorKey==='unassigned'));
   }
