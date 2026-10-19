@@ -1,0 +1,19 @@
+# Google authentication credentials
+.clasprc.json
+.clasp.json
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+
+# Node.js
+node_modules/
+npm-debug.log*
+
+# Local files
+.vscode/
+.DS_Store
+Thumbs.db
