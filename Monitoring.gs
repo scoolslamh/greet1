@@ -44,7 +44,7 @@ function monitoringRows_(name,required){
   const raw=sh.getLastRow()>1?sh.getRange(2,1,sh.getLastRow()-1,width).getDisplayValues():[];
   const rows=[],rowNumbers=[];
   raw.forEach((row,i)=>{if(row.some(value=>monitoringText_(value))){rows.push(row);rowNumbers.push(i+2);}});
-  return {rows,columns,rowNumbers};
+  return {rows,columns,rowNumbers,headers};
 }
 function monitoringAccounts_(){
   const table=monitoringRows_(MONITOR_SHEET,MONITOR_HEADERS),c=table.columns;
@@ -84,20 +84,25 @@ function getMonitoring(token){
 }
 function logoutSupervisor(token){CacheService.getScriptCache().remove(monitoringSessionKey_(token));return true;}
 function monitoringData_(account){
-  const table=monitoringRows_(SHEETS.schools,['معرف السجل','اسم المدرسة','اسم مدير المدرسة','المحافظة','جوال مدير المدرسة','المشرف','السجل المدني']),c=table.columns;
+  const isManager=account.role==='مدير النظام';
+  const table=monitoringRows_(SHEETS.schools,['معرف السجل','اسم المدرسة','اسم مدير المدرسة','المحافظة','جوال مدير المدرسة']),c=table.columns;
+  const civilColumn=table.headers.filter(header=>header==='السجل المدني').length===1?table.headers.indexOf('السجل المدني'):-1;
+  const supervisorColumn=table.headers.filter(header=>header==='المشرف').length===1?table.headers.indexOf('المشرف'):-1;
+  // A manager can always see all schools. Supervisors must have a valid assignment column.
+  if(!isManager&&civilColumn<0)throw Error('يلزم وجود عمود واحد باسم السجل المدني في ورقة المدارس لتحديد المدارس المسندة للمشرف');
   const allAccounts=monitoringAccounts_(),accounts=allAccounts.filter(item=>!item.error),byCivil=new Map(accounts.map(item=>[item.civil,item]));
   const statuses=new Map(records_(SHEETS.status).map(item=>[item.values[0],item.values[1]]));
-  const isManager=account.role==='مدير النظام';
   const schools=[];
   for(const row of table.rows){
-    const civil=monitoringCivil_(row[c['السجل المدني']]);
+    const civil=civilColumn>=0?monitoringCivil_(row[civilColumn]):'';
     if(!isManager&&civil!==account.civil)continue;
     const owner=byCivil.get(civil);
-    schools.push({id:row[c['معرف السجل']],name:row[c['اسم المدرسة']],principal:row[c['اسم مدير المدرسة']],governorate:row[c['المحافظة']],mobile:row[c['جوال مدير المدرسة']],supervisor:owner?owner.name:String(row[c['المشرف']]||''),supervisorKey:owner?owner.key:'unassigned',status:statuses.get(row[c['معرف السجل']])||'لم يبدأ'});
+    schools.push({id:row[c['معرف السجل']],name:row[c['اسم المدرسة']],principal:row[c['اسم مدير المدرسة']],governorate:row[c['المحافظة']],mobile:row[c['جوال مدير المدرسة']],supervisor:owner?owner.name:String(supervisorColumn>=0?row[supervisorColumn]||'':''),supervisorKey:owner?owner.key:'unassigned',status:statuses.get(row[c['معرف السجل']])||'لم يبدأ'});
   }
   const summarize=list=>{const complete=list.filter(item=>item.status==='مكتمل').length;return {total:list.length,complete,remaining:list.length-complete,percent:list.length?Math.round(complete/list.length*100):0};};
   const result={user:{name:account.name,role:account.role},stats:summarize(schools),schools};
   if(isManager){
+    result.assignmentReady=civilColumn>=0;
     result.accountIssues=allAccounts.filter(item=>item.error).map(item=>item.error);
     result.supervisors=accounts.map(owner=>({key:owner.key,name:owner.name,role:owner.role,...summarize(schools.filter(item=>item.supervisorKey===owner.key))}));
     result.unassigned=summarize(schools.filter(item=>item.supervisorKey==='unassigned'));

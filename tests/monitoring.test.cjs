@@ -26,6 +26,15 @@ test('manager sees global stats, each supervisor and unassigned records',()=>{
   assert.equal(data.supervisors.find(item=>item.name==='Second').percent,100);
   assert.equal(data.unassigned.total,1);assert.ok(!JSON.stringify(data).includes('1000000002'));
 });
+test('manager sees all statistics without assignment columns; supervisors cannot bypass scoping',()=>{
+  const {ctx,schools}=environment();
+  for(const row of schools)row.splice(5,2);
+  const {data}=ctx.loginSupervisor('1000000003');
+  assert.equal(data.stats.total,4);assert.equal(data.stats.complete,2);assert.equal(data.stats.percent,50);
+  assert.equal(data.unassigned.total,4);assert.equal(data.assignmentReady,false);
+  assert.equal(data.supervisors.length,3);
+  assert.throws(()=>ctx.loginSupervisor('1000000001'));
+});
 test('permissions and assignments are rechecked on refresh; removed accounts lose access',()=>{
   const {ctx,accounts,schools}=environment();const login=ctx.loginSupervisor('1000000001');
   schools[2][6]='1000000002';assert.equal(ctx.getMonitoring(login.token).stats.total,1);
