@@ -8,6 +8,7 @@ const root = path.resolve(__dirname, '..');
 function apiContext() {
   const calls = [];
   const context = {
+    beginRequest_() {},
     ContentService: {
       MimeType: { JSON: 'json' },
       createTextOutput(text) { return { text, setMimeType() { return this; } }; }
@@ -108,7 +109,7 @@ test('interface dispatches native Google calls or the static transport and prese
 test('Pages artifact has a lowercase entrypoint and only public frontend files', () => {
   require('../scripts/build-pages.cjs');
   const files = fs.readdirSync(path.join(root, '_site')).sort();
-  assert.deepEqual(files, ['.nojekyll', 'index.html', 'monitor.html', 'web-client.js']);
+  assert.deepEqual(files, ['.nojekyll', 'favicon.svg', 'index.html', 'moe-logo.svg', 'monitor.html', 'web-client.js']);
   const output = fs.readFileSync(path.join(root, '_site/index.html'), 'utf8');
   assert.ok(output.includes('<script src="./web-client.js" defer></script>'));
   assert.ok(!output.includes('???? ?????'));

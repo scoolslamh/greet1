@@ -4,7 +4,7 @@ function environment(){
   const schools=[['معرف السجل','اسم المدرسة','اسم مدير المدرسة','المحافظة','جوال مدير المدرسة','المشرف','السجل المدني'],['a','A','Principal A','North','0500000000','First','1000000001'],['b','B','Principal B','South','0500000001','First','1000000001'],['c','C','Principal C','East','0500000002','Second','1000000002'],['d','D','Principal D','West','0500000003','','']];
   const cache=new Map();let uuid=0;
   const sheets={'المدارس':schools,'المشرفين':accounts};
-  const ctx=vm.createContext({SHEETS:{schools:'المدارس',status:'status'},normalizeCode_:value=>String(value||'').trim().replace(/[٠-٩]/g,c=>String(c.charCodeAt(0)-1632)),hash_:value=>'hashed-'+value,
+  const ctx=vm.createContext({beginRequest_(){},SHEETS:{schools:'المدارس',status:'status'},normalizeCode_:value=>String(value||'').trim().replace(/[٠-٩]/g,c=>String(c.charCodeAt(0)-1632)),hash_:value=>'hashed-'+value,
     Utilities:{getUuid:()=>String(++uuid)},CacheService:{getScriptCache:()=>({put:(key,value)=>cache.set(key,value),get:key=>cache.get(key),remove:key=>cache.delete(key)})},
     sheet_:name=>{const rows=sheets[name];if(!rows)throw Error('missing');return {getLastColumn:()=>rows[0].length,getLastRow:()=>rows.length,getRange:(row,col,height,width)=>({getDisplayValues:()=>rows.slice(row-1,row-1+height).map(item=>item.slice(col-1,col-1+width))})};},
     records_:()=>[{values:['a','مكتمل']},{values:['c','مكتمل']}]
@@ -63,4 +63,17 @@ test('contact links accept Saudi mobile numbers and reject executable input',()=
   const ctx=vm.createContext({window:{},document:{getElementById:()=>({addEventListener(){}})}});vm.runInContext(code,ctx);
   assert.equal(ctx.phoneNumber('٠٥٠٠٠٠٠٠٠٠'),'966500000000');assert.equal(ctx.phoneNumber('javascript:alert(1)'),null);
   assert.equal(ctx.phoneNumber('+966500000000'),'966500000000');
+});
+test('large school lists render 50 rows per page and filters reset pagination',()=>{
+  const html=fs.readFileSync('Monitor.html','utf8');const code=[...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi)][0][1];
+  const nodes={};const el=id=>nodes[id]??={value:'',textContent:'',innerHTML:'',addEventListener(){},classList:{add(){},toggle(){}}};
+  const ctx=vm.createContext({window:{},clearTimeout(){},document:{getElementById:el}});vm.runInContext(code,ctx);
+  el('statusFilter').value='all';el('ownerFilter').value='all';
+  const schools=Array.from({length:123},(_,i)=>({id:String(i),name:'School'+i,principal:'Principal',governorate:'North',mobile:'0500000000',status:'مكتمل',supervisorKey:'owner'}));
+  vm.runInContext('model='+JSON.stringify({user:{role:'مدير النظام'},schools}),ctx);
+  ctx.drawSchools();assert.equal((el('schools').innerHTML.match(/data-contact=/g)||[]).length,50);
+  ctx.changeSchoolPage(2);assert.equal((el('schools').innerHTML.match(/data-contact=/g)||[]).length,23);
+  el('search').value='School122';ctx.filterSchools();
+  assert.equal((el('schools').innerHTML.match(/data-contact=/g)||[]).length,1);
+  assert.match(el('schoolPageLabel').textContent,/1/);
 });

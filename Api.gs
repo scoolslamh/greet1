@@ -12,6 +12,7 @@ function apiHealth_() {
 }
 
 function doPost(e) {
+  beginRequest_();
   try {
     const body = e && e.postData && e.postData.contents;
     if (typeof body !== 'string' || body.length > 65536) throw Error('طلب غير صالح');

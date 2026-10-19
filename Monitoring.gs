@@ -4,6 +4,7 @@ const MONITOR_HEADERS = ['الاسم','السجل المدني','الصلاحي�
 
 // Run once from the Apps Script editor. Existing cells and column positions are preserved.
 function setupMonitoring_() {
+  beginRequest_();
   const lock=LockService.getScriptLock();lock.waitLock(10000);
   try {
     const ss=db_();
@@ -49,18 +50,20 @@ function monitoringRows_(name,required){
 function monitoringAccounts_(){
   const table=monitoringRows_(MONITOR_SHEET,MONITOR_HEADERS),c=table.columns;
   const accounts=table.rows.map((row,i)=>({key:'supervisor_'+table.rowNumbers[i],row:table.rowNumbers[i],name:monitoringText_(row[c['الاسم']]),civil:monitoringCivil_(row[c['السجل المدني']]),role:monitoringText_(row[c['الصلاحية']])}));
+  const frequencies=new Map();
+  for(const account of accounts)frequencies.set(account.civil,(frequencies.get(account.civil)||0)+1);
   for(const account of accounts){
     const errors=[];
     if(!account.name)errors.push('الاسم مطلوب');
     if(!/^\d{10}$/.test(account.civil))errors.push('السجل المدني يجب أن يتكون من 10 أرقام');
     if(!['مشرف','مدير النظام'].includes(account.role))errors.push('الصلاحية يجب أن تكون مشرف أو مدير النظام');
-    if(account.civil&&accounts.filter(item=>item.civil===account.civil).length>1)errors.push('السجل المدني مكرر');
+    if(account.civil&&frequencies.get(account.civil)>1)errors.push('السجل المدني مكرر');
     account.error=errors.length?'ورقة المشرفين، الصف '+account.row+': '+errors.join('؛ '):'';
   }
   return accounts;
 }
-function monitoringAccount_(civil){
-  const matches=monitoringAccounts_().filter(item=>item.civil===civil);
+function monitoringAccount_(civil,accounts){
+  const matches=(accounts||monitoringAccounts_()).filter(item=>item.civil===civil);
   if(!matches.length)throw Error('لا يوجد حساب متابعة مسجل بهذه البيانات');
   if(matches.length>1)throw Error('السجل المدني مكرر في ورقة المشرفين؛ راجع الصفوف '+matches.map(item=>item.row).join('، '));
   if(matches[0].error)throw Error(matches[0].error);
@@ -68,29 +71,31 @@ function monitoringAccount_(civil){
 }
 function monitoringSessionKey_(token){return 'monitor_'+hash_(String(token||''));}
 function loginSupervisor(civil){
+  beginRequest_();
   civil=monitoringCivil_(civil);
   if(!/^\d{10}$/.test(civil))throw Error('أدخل سجلاً مدنياً صحيحاً من 10 أرقام');
-  const account=monitoringAccount_(civil);
+  const accounts=monitoringAccounts_(),account=monitoringAccount_(civil,accounts);
   const token=Utilities.getUuid()+Utilities.getUuid();
-  const result=monitoringData_(account);
+  const result=monitoringData_(account,accounts);
   CacheService.getScriptCache().put(monitoringSessionKey_(token),civil,21600);
   return {token,data:result};
 }
 function getMonitoring(token){
+  beginRequest_();
   const civil=CacheService.getScriptCache().get(monitoringSessionKey_(token));
   if(!civil)throw Error('انتهت جلسة المتابعة؛ سجل الدخول مجدداً');
-  const account=monitoringAccount_(civil);
-  return monitoringData_(account);
+  const accounts=monitoringAccounts_(),account=monitoringAccount_(civil,accounts);
+  return monitoringData_(account,accounts);
 }
 function logoutSupervisor(token){CacheService.getScriptCache().remove(monitoringSessionKey_(token));return true;}
-function monitoringData_(account){
+function monitoringData_(account,accountSnapshot){
   const isManager=account.role==='مدير النظام';
   const table=monitoringRows_(SHEETS.schools,['معرف السجل','اسم المدرسة','اسم مدير المدرسة','المحافظة','جوال مدير المدرسة']),c=table.columns;
   const civilColumn=table.headers.filter(header=>header==='السجل المدني').length===1?table.headers.indexOf('السجل المدني'):-1;
   const supervisorColumn=table.headers.filter(header=>header==='المشرف').length===1?table.headers.indexOf('المشرف'):-1;
   // A manager can always see all schools. Supervisors must have a valid assignment column.
   if(!isManager&&civilColumn<0)throw Error('يلزم وجود عمود واحد باسم السجل المدني في ورقة المدارس لتحديد المدارس المسندة للمشرف');
-  const allAccounts=monitoringAccounts_(),accounts=allAccounts.filter(item=>!item.error),byCivil=new Map(accounts.map(item=>[item.civil,item]));
+  const allAccounts=accountSnapshot||monitoringAccounts_(),accounts=allAccounts.filter(item=>!item.error),byCivil=new Map(accounts.map(item=>[item.civil,item]));
   const statuses=new Map(records_(SHEETS.status).map(item=>[item.values[0],item.values[1]]));
   const schools=[];
   for(const row of table.rows){
@@ -104,7 +109,9 @@ function monitoringData_(account){
   if(isManager){
     result.assignmentReady=civilColumn>=0;
     result.accountIssues=allAccounts.filter(item=>item.error).map(item=>item.error);
-    result.supervisors=accounts.map(owner=>({key:owner.key,name:owner.name,role:owner.role,...summarize(schools.filter(item=>item.supervisorKey===owner.key))}));
+    const totals=new Map(accounts.map(owner=>[owner.key,{total:0,complete:0}]));
+    for(const school of schools){const counter=totals.get(school.supervisorKey);if(counter){counter.total++;if(school.status==='مكتمل')counter.complete++;}}
+    result.supervisors=accounts.map(owner=>{const counter=totals.get(owner.key);return {key:owner.key,name:owner.name,role:owner.role,...counter,remaining:counter.total-counter.complete,percent:counter.total?Math.round(counter.complete/counter.total*100):0};});
     result.unassigned=summarize(schools.filter(item=>item.supervisorKey==='unassigned'));
   }
   return result;
