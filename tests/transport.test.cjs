@@ -16,7 +16,7 @@ function apiContext() {
     db_() { return { getSheetByName() { return {}; } }; },
     SHEETS: { schools: 'schools' }
   };
-  for (const name of ['loginByCode', 'getData', 'saveSchool', 'saveGuards', 'saveCoverage', 'approve', 'loginSupervisor', 'getMonitoring', 'logoutSupervisor']) {
+  for (const name of ['loginByCode', 'getData', 'saveSchool', 'saveGuards', 'saveCoverage', 'approve', 'loginSupervisor', 'getMonitoring', 'logoutSupervisor', 'reopenSchool']) {
     context[name] = (...args) => { calls.push({ name, args }); return { name, args }; };
   }
   vm.createContext(context);

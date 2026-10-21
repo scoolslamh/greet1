@@ -26,6 +26,7 @@ function doPost(e) {
       loginSupervisor: { count: 1, call: loginSupervisor },
       getMonitoring: { count: 1, call: getMonitoring },
       logoutSupervisor: { count: 1, call: logoutSupervisor },
+      reopenSchool: { count: 2, call: reopenSchool },
       loginByCode: { count: 1, call: loginByCode },
       getData: { count: 1, call: getData },
       saveSchool: { count: 2, call: saveSchool },

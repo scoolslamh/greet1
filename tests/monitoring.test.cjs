@@ -9,7 +9,7 @@ function environment(){
     sheet_:name=>{const rows=sheets[name];if(!rows)throw Error('missing');return {getLastColumn:()=>rows[0].length,getLastRow:()=>rows.length,getRange:(row,col,height,width)=>({getDisplayValues:()=>rows.slice(row-1,row-1+height).map(item=>item.slice(col-1,col-1+width))})};},
     records_:()=>[{values:['a','مكتمل']},{values:['c','مكتمل']}]
   });
-  vm.runInContext(fs.readFileSync('Monitoring.gs','utf8'),ctx);
+  vm.runInContext(fs.readFileSync(process.env.MONITORING_BACKEND_PATH||'Monitoring.gs','utf8'),ctx);
   return {ctx,accounts,schools};
 }
 test('supervisor sees assigned schools only, accurate counts, and no civil IDs',()=>{
@@ -59,6 +59,25 @@ test('permissions and assignments are rechecked on refresh; removed accounts los
 test('unknown, malformed and duplicate civil IDs cannot log in',()=>{
   const {ctx,accounts}=environment();assert.throws(()=>ctx.loginSupervisor('123'));assert.throws(()=>ctx.loginSupervisor('9999999999'));
   accounts.push(['Duplicate','1000000001','مشرف']);assert.throws(()=>ctx.loginSupervisor('1000000001'));
+});
+test('only manager sessions can reopen a single approved school and statistics refresh',()=>{
+  const {ctx,schools}=environment();const statuses=[{values:['a','مكتمل']},{values:['c','مكتمل']}];
+  ctx.records_=name=>name==='المدارس'?schools.slice(1).map(values=>({values})):statuses;
+  ctx.find_=(name,id)=>statuses.find(row=>row.values[0]===id);
+  let writes=0;ctx.touch_=(id,complete)=>{assert.equal(complete,false);writes++;statuses.find(row=>row.values[0]===id).values[1]='قيد الاستكمال';};
+  ctx.withWriteLock_=work=>work();
+  const supervisor=ctx.loginSupervisor('1000000001');assert.throws(()=>ctx.reopenSchool(supervisor.token,{id:'a'}),/مدير النظام/);assert.equal(writes,0);
+  assert.throws(()=>ctx.reopenSchool('invalid',{id:'a'}));assert.equal(writes,0);
+  const manager=ctx.loginSupervisor('1000000003');const result=ctx.reopenSchool(manager.token,{id:'a'});
+  assert.equal(result.stats.complete,1);assert.equal(result.schools.find(row=>row.id==='a').status,'قيد الاستكمال');
+  assert.equal(result.schools.find(row=>row.id==='c').status,'مكتمل');assert.equal(writes,1);
+  ctx.reopenSchool(manager.token,{id:'a'});assert.equal(writes,1);
+  assert.throws(()=>ctx.reopenSchool(manager.token,{id:'missing'}));assert.equal(writes,1);
+});
+test('manager permission is rechecked after waiting for the write lock',()=>{
+  const {ctx,accounts}=environment();const manager=ctx.loginSupervisor('1000000003');let writes=0;
+  ctx.withWriteLock_=work=>{accounts[3][2]='مشرف';return work();};ctx.touch_=()=>writes++;
+  assert.throws(()=>ctx.reopenSchool(manager.token,{id:'a'}),/مدير النظام/);assert.equal(writes,0);
 });
 test('incomplete unrelated rows do not block valid accounts and whitespace roles normalize',()=>{
   const {ctx,accounts}=environment();

@@ -99,6 +99,26 @@ function getMonitoring(token){
   return monitoringData_(account,accounts);
 }
 function logoutSupervisor(token){CacheService.getScriptCache().remove(monitoringSessionKey_(token));return true;}
+function reopenSchool(token,payload){
+  beginRequest_();
+  const id=payload&&typeof payload.id==='string'?payload.id.trim():'';
+  if(!id||id.length>150)throw Error('معرف المدرسة غير صالح');
+  const requireManager=()=>{
+    const civil=CacheService.getScriptCache().get(monitoringSessionKey_(token));
+    if(!civil)throw Error('انتهت جلسة المتابعة؛ سجل الدخول مجدداً');
+    const account=monitoringAccount_(civil);
+    if(account.role!=='مدير النظام')throw Error('إعادة فتح التعديل متاحة لمدير النظام فقط');
+  };
+  requireManager();
+  withWriteLock_(function(){
+    requireManager();
+    const matches=records_(SHEETS.schools).filter(row=>row.values[0]===id);
+    if(matches.length!==1)throw Error(matches.length?'معرف المدرسة مكرر؛ راجع سجل المدارس':'المدرسة غير موجودة');
+    const status=find_(SHEETS.status,id);
+    if(status&&status.values[1]==='مكتمل')touch_(id,false);
+  });
+  return getMonitoring(token);
+}
 function monitoringData_(account,accountSnapshot){
   const isManager=account.role==='مدير النظام';
   const table=monitoringRows_(SHEETS.schools,['معرف السجل','اسم المدرسة','اسم مدير المدرسة','المحافظة','جوال مدير المدرسة']),c=table.columns;
