@@ -12,7 +12,7 @@ function setupMonitoring_() {
     ensureMonitoringHeaders_(supervisors,MONITOR_HEADERS);
     ensureMonitoringHeaders_(sheet_(SHEETS.schools),['المشرف','السجل المدني']);
     for(const sh of [supervisors,sheet_(SHEETS.schools)]){
-      const headers=sh.getRange(1,1,1,sh.getLastColumn()).getDisplayValues()[0].map(monitoringText_);
+      const headers=sh.getRange(1,1,1,sh.getLastColumn()).getDisplayValues()[0].map(monitoringHeader_);
       const civil=headers.indexOf('السجل المدني');
       if(civil>=0)sh.getRange(2,civil+1,Math.max(1,sh.getMaxRows()-1),1).setNumberFormat('@');
       sh.setRightToLeft(true);sh.setFrozenRows(1);
@@ -23,8 +23,8 @@ function setupMonitoring_() {
 function ensureMonitoringHeaders_(sh,required){
   const existing=sh.getLastColumn()?sh.getRange(1,1,1,sh.getLastColumn()).getDisplayValues()[0]:[];
   for(const header of required){
-    if(existing.filter(value=>monitoringText_(value)===header).length>1)throw Error('عمود مكرر: '+header);
-    if(!existing.some(value=>monitoringText_(value)===header)){
+    if(existing.filter(value=>monitoringHeader_(value)===monitoringHeader_(header)).length>1)throw Error('عمود مكرر: '+header);
+    if(!existing.some(value=>monitoringHeader_(value)===monitoringHeader_(header))){
       existing.push(header);
       if(sh.getMaxColumns()<existing.length)sh.insertColumnsAfter(sh.getMaxColumns(),existing.length-sh.getMaxColumns());
       sh.getRange(1,existing.length).setValue(header).setBackground('#087b69').setFontColor('#ffffff').setFontWeight('bold');
@@ -32,20 +32,31 @@ function ensureMonitoringHeaders_(sh,required){
   }
 }
 function monitoringText_(value){return String(value||'').replace(/[\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]/g,'').replace(/\s+/g,' ').trim();}
+// Normalize headings only. Never normalize names, civil IDs or roles using these substitutions.
+function monitoringHeader_(value){return monitoringText_(value).replace(/[\u0640\u064b-\u065f\u0670]/g,'').replace(/ى/g,'ي').replace(/[أإآ]/g,'ا');}
 function monitoringCivil_(value){return normalizeCode_(monitoringText_(value));}
 function monitoringRows_(name,required){
   const sh=sheet_(name),width=sh.getLastColumn();
   if(!width)throw Error('يجب تجهيز أعمدة المتابعة أولاً');
-  const headers=sh.getRange(1,1,1,width).getDisplayValues()[0].map(monitoringText_);
+  const headers=sh.getRange(1,1,1,width).getDisplayValues()[0].map(monitoringHeader_);
   const columns={};
   for(const header of required){
-    if(headers.filter(value=>value===header).length!==1)throw Error('تحقق من عمود '+header+' في ورقة '+name);
-    columns[header]=headers.indexOf(header);
+    const normalized=monitoringHeader_(header);
+    if(headers.filter(value=>value===normalized).length!==1)throw Error('تحقق من عمود '+header+' في ورقة '+name);
+    columns[header]=headers.indexOf(normalized);
   }
   const raw=sh.getLastRow()>1?sh.getRange(2,1,sh.getLastRow()-1,width).getDisplayValues():[];
   const rows=[],rowNumbers=[];
   raw.forEach((row,i)=>{if(row.some(value=>monitoringText_(value))){rows.push(row);rowNumbers.push(i+2);}});
   return {rows,columns,rowNumbers,headers};
+}
+/** Editor-only diagnostic: logs header metadata, never school data or civil ID values. */
+function diagnoseMonitoringHeaders_(){
+  beginRequest_();
+  const sh=sheet_(SHEETS.schools),width=sh.getLastColumn();
+  const headers=width?sh.getRange(1,1,1,width).getDisplayValues()[0]:[];
+  const result={sheet:sh.getName(),columns:headers.map((value,index)=>({column:index+1,title:String(value),normalized:monitoringHeader_(value),codePoints:Array.from(String(value)).map(char=>'U+'+char.codePointAt(0).toString(16).toUpperCase())}))};
+  console.log(JSON.stringify(result));return result;
 }
 function monitoringAccounts_(){
   const table=monitoringRows_(MONITOR_SHEET,MONITOR_HEADERS),c=table.columns;

@@ -40,6 +40,11 @@ test('assignment headers tolerate extra whitespace and invisible directional cha
   schools[0][5]='\u200fالمشرف ';
   assert.equal(ctx.loginSupervisor('1000000001').data.stats.total,2);
 });
+test('civil heading tolerates Arabic ya variants, diacritics and tatweel without changing account scope',()=>{
+  const {ctx,schools}=environment();schools[0][6]='السّجـل المدنى';
+  const result=ctx.loginSupervisor('1000000001');assert.equal(result.data.stats.total,2);
+  schools[0].push('السجل المدني');assert.throws(()=>ctx.loginSupervisor('1000000001'),/مكرر/);
+});
 test('missing and duplicate assignment headers give distinct errors without broadening access',()=>{
   const {ctx,schools}=environment();schools[0].push('السجل المدني');
   assert.throws(()=>ctx.loginSupervisor('1000000001'),/مكرر/);
