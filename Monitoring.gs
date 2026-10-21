@@ -12,7 +12,7 @@ function setupMonitoring_() {
     ensureMonitoringHeaders_(supervisors,MONITOR_HEADERS);
     ensureMonitoringHeaders_(sheet_(SHEETS.schools),['المشرف','السجل المدني']);
     for(const sh of [supervisors,sheet_(SHEETS.schools)]){
-      const headers=sh.getRange(1,1,1,sh.getLastColumn()).getDisplayValues()[0];
+      const headers=sh.getRange(1,1,1,sh.getLastColumn()).getDisplayValues()[0].map(monitoringText_);
       const civil=headers.indexOf('السجل المدني');
       if(civil>=0)sh.getRange(2,civil+1,Math.max(1,sh.getMaxRows()-1),1).setNumberFormat('@');
       sh.setRightToLeft(true);sh.setFrozenRows(1);
@@ -23,8 +23,8 @@ function setupMonitoring_() {
 function ensureMonitoringHeaders_(sh,required){
   const existing=sh.getLastColumn()?sh.getRange(1,1,1,sh.getLastColumn()).getDisplayValues()[0]:[];
   for(const header of required){
-    if(existing.filter(value=>String(value).trim()===header).length>1)throw Error('عمود مكرر: '+header);
-    if(!existing.some(value=>String(value).trim()===header)){
+    if(existing.filter(value=>monitoringText_(value)===header).length>1)throw Error('عمود مكرر: '+header);
+    if(!existing.some(value=>monitoringText_(value)===header)){
       existing.push(header);
       if(sh.getMaxColumns()<existing.length)sh.insertColumnsAfter(sh.getMaxColumns(),existing.length-sh.getMaxColumns());
       sh.getRange(1,existing.length).setValue(header).setBackground('#087b69').setFontColor('#ffffff').setFontWeight('bold');
@@ -36,7 +36,7 @@ function monitoringCivil_(value){return normalizeCode_(monitoringText_(value));}
 function monitoringRows_(name,required){
   const sh=sheet_(name),width=sh.getLastColumn();
   if(!width)throw Error('يجب تجهيز أعمدة المتابعة أولاً');
-  const headers=sh.getRange(1,1,1,width).getDisplayValues()[0].map(value=>String(value).trim());
+  const headers=sh.getRange(1,1,1,width).getDisplayValues()[0].map(monitoringText_);
   const columns={};
   for(const header of required){
     if(headers.filter(value=>value===header).length!==1)throw Error('تحقق من عمود '+header+' في ورقة '+name);
@@ -94,7 +94,11 @@ function monitoringData_(account,accountSnapshot){
   const civilColumn=table.headers.filter(header=>header==='السجل المدني').length===1?table.headers.indexOf('السجل المدني'):-1;
   const supervisorColumn=table.headers.filter(header=>header==='المشرف').length===1?table.headers.indexOf('المشرف'):-1;
   // A manager can always see all schools. Supervisors must have a valid assignment column.
-  if(!isManager&&civilColumn<0)throw Error('يلزم وجود عمود واحد باسم السجل المدني في ورقة المدارس لتحديد المدارس المسندة للمشرف');
+  if(!isManager&&civilColumn<0){
+    const matches=table.headers.filter(header=>header==='السجل المدني').length;
+    if(matches>1)throw Error('عنوان السجل المدني مكرر في الصف الأول من ورقة المدارس؛ يجب وجود عمود واحد فقط بهذا الاسم');
+    throw Error('لم يُعثر على عنوان السجل المدني في الصف الأول من ورقة المدارس؛ تحقق من اسم العمود وملف البيانات المرتبط بالنظام');
+  }
   const allAccounts=accountSnapshot||monitoringAccounts_(),accounts=allAccounts.filter(item=>!item.error),byCivil=new Map(accounts.map(item=>[item.civil,item]));
   const statuses=new Map(records_(SHEETS.status).map(item=>[item.values[0],item.values[1]]));
   const schools=[];

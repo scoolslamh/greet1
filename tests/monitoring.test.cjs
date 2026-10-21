@@ -35,6 +35,17 @@ test('manager sees all statistics without assignment columns; supervisors cannot
   assert.equal(data.supervisors.length,3);
   assert.throws(()=>ctx.loginSupervisor('1000000001'));
 });
+test('assignment headers tolerate extra whitespace and invisible directional characters',()=>{
+  const {ctx,schools}=environment();schools[0][6]=' \u200fالسجل\u00a0  المدني\u200e\n';
+  schools[0][5]='\u200fالمشرف ';
+  assert.equal(ctx.loginSupervisor('1000000001').data.stats.total,2);
+});
+test('missing and duplicate assignment headers give distinct errors without broadening access',()=>{
+  const {ctx,schools}=environment();schools[0].push('السجل المدني');
+  assert.throws(()=>ctx.loginSupervisor('1000000001'),/مكرر/);
+  schools[0].pop();schools[0][6]='عنوان مختلف';
+  assert.throws(()=>ctx.loginSupervisor('1000000001'),/لم يُعثر/);
+});
 test('permissions and assignments are rechecked on refresh; removed accounts lose access',()=>{
   const {ctx,accounts,schools}=environment();const login=ctx.loginSupervisor('1000000001');
   schools[2][6]='1000000002';assert.equal(ctx.getMonitoring(login.token).stats.total,1);
