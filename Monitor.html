@@ -12,21 +12,47 @@
 </main><footer>إدارة الأمن والسلامة بعسير</footer><dialog id="contact"><h2>التواصل مع مدير المدرسة</h2><p id="contactName"></p><a id="callLink">اتصال</a><a id="whatsappLink" target="_blank" rel="noopener noreferrer">رسالة واتساب</a><button class="secondary" onclick="document.getElementById('contact').close()">إغلاق</button></dialog>
 <script>
 'use strict';
-let session='',model=null,pending=false,schoolPage=1,searchTimer;const schoolPageSize=50;
+let session='',model=null,pending=false,schoolPage=1,searchTimer,sessionGeneration=0;const schoolPageSize=50;
 const $=id=>document.getElementById(id);
+const monitorStorageKey='aseer-monitor-session-v1';
+function forgetStoredSession(){try{window.localStorage.removeItem(monitorStorageKey);}catch(_){} }
+function rememberSession(token){try{window.localStorage.setItem(monitorStorageKey,JSON.stringify({token,expiresAt:Date.now()+21600000}));}catch(_){} }
+function readStoredSession(){
+  try{const stored=JSON.parse(window.localStorage.getItem(monitorStorageKey)||'null');if(stored&&typeof stored.token==='string'&&stored.token.length>0&&stored.token.length<=200&&Number.isFinite(stored.expiresAt)&&stored.expiresAt>Date.now())return stored;forgetStoredSession();}catch(_){forgetStoredSession();}return null;
+}
+function clearMonitorSession(){
+  sessionGeneration++;session='';model=null;schoolPage=1;clearTimeout(searchTimer);
+  $('dashboard').classList.add('hidden');$('login').classList.remove('hidden');
+  for(const id of ['schools','supervisors','stats','ownerFilter'])$(id).innerHTML='';
+  for(const id of ['welcome','updated','contactName','shown','unassigned'])$(id).textContent='';
+  $('civil').value='';$('search').value='';$('statusFilter').value='all';
+  $('callLink').removeAttribute('href');$('whatsappLink').removeAttribute('href');
+  if($('contact').open)$('contact').close();
+}
+function sessionExpired(error){return /انتهت جلسة المتابعة|لا يوجد حساب متابعة|لم تعد صلاحية المتابعة/.test(error.message||'');}
+async function restoreSession(){
+  const stored=readStoredSession();if(!stored)return;
+  const token=stored.token;session=token;$('login').classList.add('hidden');
+  await busy(async()=>{try{const result=await call('getMonitoring',token);if(session!==token)return;model=result;$('dashboard').classList.remove('hidden');render();}
+    catch(error){if(session!==token)return;if(sessionExpired(error))forgetStoredSession();clearMonitorSession();throw error;}});
+}
+if(window.addEventListener){
+  window.addEventListener('DOMContentLoaded',restoreSession);
+  window.addEventListener('storage',event=>{if(event.key===monitorStorageKey&&session){const stored=readStoredSession();if(!stored||stored.token!==session){clearMonitorSession();hideNotice();}}});
+}
 const esc=value=>String(value??'').replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
 function hideNotice(){$('notice').textContent='';$('notice').classList.add('hidden');}
 function showNotice(message,error=true){$('notice').style.background=error?'#fff0ef':'#e8f5ef';$('notice').style.color=error?'#972f28':'#145b43';$('notice').textContent=message;$('notice').classList.remove('hidden');}
 function call(action,...args){if(window.google&&google.script&&google.script.run)return new Promise((resolve,reject)=>google.script.run.withSuccessHandler(resolve).withFailureHandler(reject)[action](...args));if(!window.schoolBackend)return Promise.reject(Error('تعذر تحميل الاتصال؛ أعد تحميل الصفحة'));return window.schoolBackend.call(action,args);}
-async function busy(action){if(pending)return;pending=true;hideNotice();$('loading').classList.remove('hidden');document.querySelectorAll('button').forEach(button=>button.disabled=true);try{await action();}catch(error){showNotice(error.message||'تعذر تنفيذ الطلب');}finally{$('loading').classList.add('hidden');pending=false;document.querySelectorAll('button').forEach(button=>button.disabled=false);}}
+async function busy(action){if(pending)return;pending=true;hideNotice();$('loading').classList.remove('hidden');document.querySelectorAll('button').forEach(button=>button.disabled=true);try{await action();}catch(error){if(sessionExpired(error)){forgetStoredSession();clearMonitorSession();}showNotice(error.message||'تعذر تنفيذ الطلب');}finally{$('loading').classList.add('hidden');pending=false;document.querySelectorAll('button').forEach(button=>button.disabled=false);}}
 function normalizeDigits(value){return String(value).replace(/[٠-٩]/g,char=>String(char.charCodeAt(0)-1632)).replace(/[۰-۹]/g,char=>String(char.charCodeAt(0)-1776)).replace(/\s/g,'');}
 async function signIn(){
   const civil=normalizeDigits($('civil').value);
   if(!/^\d{10}$/.test(civil)){$('civil').classList.add('invalid');$('civil').setAttribute('aria-invalid','true');$('civilError').textContent='أدخل سجلاً مدنياً صحيحاً من 10 أرقام';$('civilError').classList.remove('hidden');$('civil').focus();return;}
-  await busy(async()=>{try{const result=await call('loginSupervisor',civil);session=result.token;model=result.data;$('civil').value='';$('login').classList.add('hidden');$('dashboard').classList.remove('hidden');render();}catch(error){$('civil').classList.add('invalid');$('civil').setAttribute('aria-invalid','true');throw error;}});
+  await busy(async()=>{try{const generation=sessionGeneration;const result=await call('loginSupervisor',civil);if(generation!==sessionGeneration)return;session=result.token;rememberSession(session);model=result.data;$('civil').value='';$('login').classList.add('hidden');$('dashboard').classList.remove('hidden');render();}catch(error){$('civil').classList.add('invalid');$('civil').setAttribute('aria-invalid','true');throw error;}});
 }
-async function refresh(){await busy(async()=>{model=await call('getMonitoring',session);render();});}
-async function signOut(){await busy(async()=>{const token=session;session='';model=null;$('dashboard').classList.add('hidden');$('login').classList.remove('hidden');$('schools').innerHTML='';$('supervisors').innerHTML='';$('stats').innerHTML='';$('welcome').textContent='';$('civil').value='';if($('contact').open)$('contact').close();await call('logoutSupervisor',token);});}
+async function refresh(){await busy(async()=>{const token=session,result=await call('getMonitoring',token);if(session!==token)return;model=result;render();});}
+async function signOut(){await busy(async()=>{const token=session;forgetStoredSession();clearMonitorSession();await call('logoutSupervisor',token);});}
 function render(){
   hideNotice();const stats=model.stats,manager=model.user.role==='مدير النظام';
   $('welcome').textContent=model.user.name+' — '+model.user.role;
@@ -50,7 +76,7 @@ async function reopenSchoolRecord(id){
   if(pending||!model||model.user.role!=='مدير النظام')return;
   const school=model.schools.find(item=>item.id===id);if(!school||school.status!=='مكتمل')return;
   if(!confirm('إعادة فتح مدرسة «'+school.name+'» للتعديل؟ ستصبح حالتها قيد الاستكمال وتحتاج اعتماداً جديداً بعد التصحيح.'))return;
-  await busy(async()=>{model=await call('reopenSchool',session,{id:school.id});render();showNotice('تمت إعادة فتح المدرسة للتعديل؛ يمكن الدخول برقمها الوزاري وتصحيح البيانات ثم اعتمادها مجدداً.',false);});
+  await busy(async()=>{const token=session,result=await call('reopenSchool',token,{id:school.id});if(session!==token)return;model=result;render();showNotice('تمت إعادة فتح المدرسة للتعديل؛ يمكن الدخول برقمها الوزاري وتصحيح البيانات ثم اعتمادها مجدداً.',false);});
 }
 function phoneNumber(value){let number=normalizeDigits(value).replace(/[+()\-]/g,'');if(/^05\d{8}$/.test(number))number='966'+number.slice(1);return /^9665\d{8}$/.test(number)?number:null;}
 function phoneButton(school){return phoneNumber(school.mobile)?'<button class="phone" data-contact="'+esc(school.id)+'">'+esc(school.mobile)+'</button>':esc(school.mobile||'غير متوفر');}
