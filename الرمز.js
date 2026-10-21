@@ -88,9 +88,15 @@ function load_(id){
   return {school:{id,code:r.values[1],name:r.values[2],village:r.values[3],governorate:r.values[4],stage:r.values[5],office:r.values[6],gender:r.values[7],type:r.values[8],principal:r.values[9],mobile:r.values[10],address:r.values[11],email:r.values[12]},guards,coverage:c?c.values.slice(1,18):null,status:st?st.values[1]:'لم يبدأ',options:OPTIONS};
 }
 function getData(token){beginRequest_();return load_(auth_(token));}
+function withWriteLock_(work){
+  const lock=LockService.getScriptLock();
+  if(!lock.tryLock(25000))throw Error('النظام مشغول حالياً بحفظ طلبات أخرى. لم يبدأ حفظ هذا الطلب؛ حاول مجدداً بعد قليل.');
+  try{clearReadCache_();return work();}
+  finally{try{SpreadsheetApp.flush();}finally{lock.releaseLock();}}
+}
 function editable_(id){const st=find_(SHEETS.status,id);if(st&&st.values[1]==='مكتمل')throw Error('السجل معتمد؛ تواصل مع المشرف لإعادة فتحه');}
 function touch_(id,complete){const old=find_(SHEETS.status,id),now=new Date();upsert_(SHEETS.status,id,[id,complete?'مكتمل':'قيد الاستكمال',now,complete?now:(old?old.values[3]:'')]);}
-function saveSchool(token,p){beginRequest_();const id=auth_(token);if(!p||!isEmail_(p.email)||!phone_(p.mobile)||!String(p.principal||'').trim()||!String(p.address||'').trim())throw Error('تحقق من اسم المدير والجوال والعنوان والبريد');const lock=LockService.getScriptLock();lock.waitLock(10000);try{clearReadCache_();editable_(id);const r=find_(SHEETS.schools,id);const v=r.values.slice(0,13);v[9]=String(p.principal).trim().slice(0,150);v[10]=String(p.mobile).trim();v[11]=String(p.address).trim().slice(0,500);v[12]=email_(p.email);sheet_(SHEETS.schools).getRange(r.row,1,1,13).setValues([v]);invalidateSheet_(SHEETS.schools);touch_(id,false);return load_(id);}finally{lock.releaseLock();}}
+function saveSchool(token,p){beginRequest_();const id=auth_(token);if(!p||!isEmail_(p.email)||!phone_(p.mobile)||!String(p.principal||'').trim()||!String(p.address||'').trim())throw Error('تحقق من اسم المدير والجوال والعنوان والبريد');withWriteLock_(function(){editable_(id);const r=find_(SHEETS.schools,id);const v=r.values.slice(0,13);v[9]=String(p.principal).trim().slice(0,150);v[10]=String(p.mobile).trim();v[11]=String(p.address).trim().slice(0,500);v[12]=email_(p.email);sheet_(SHEETS.schools).getRange(r.row,1,1,13).setValues([v]);invalidateSheet_(SHEETS.schools);touch_(id,false);});return load_(id);}
 function validateGuards_(arr){if(!Array.isArray(arr)||arr.length>50)throw Error('عدد الحراس غير صالح');return arr.map(g=>{const name=String(g.name||'').trim(),mobile=String(g.mobile||'').trim();if(!name||name.length>150||!phone_(mobile))throw Error('أكمل اسم كل حارس وجواله بشكل صحيح');return {name,mobile};});}
 function guardsHeaders_(n){
   const h=GUARD_HEADERS.slice();
@@ -136,10 +142,9 @@ function migrateGuardsColumns_(){
 }
 function saveGuards(token,p){beginRequest_();
   const id=auth_(token),ministry=validateGuards_(p.ministry),company=validateGuards_(p.company);
-  const lock=LockService.getScriptLock();lock.waitLock(30000);
-  try{
-    clearReadCache_();editable_(id);
-    migrateGuardsColumns_();
+  withWriteLock_(function(){
+    editable_(id);
+    if(String(sheet_(SHEETS.guards).getRange(1,2).getDisplayValue())!=='الرقم الوزاري')throw Error('يلزم تحديث هيكل ورقة الحراس مرة واحدة بواسطة مسؤول النظام قبل الحفظ');
     const school=find_(SHEETS.schools,id);if(!school)throw Error('سجل المدرسة غير موجود');
     const sh=sheet_(SHEETS.guards),old=find_(SHEETS.guards,id);
     const row=old?old.row:Math.max(2,sh.getLastRow()+1);
@@ -147,16 +152,16 @@ function saveGuards(token,p){beginRequest_();
     const width=Math.max(sh.getLastColumn(),values.length);
     if(sh.getMaxColumns()<width)sh.insertColumnsAfter(sh.getMaxColumns(),width-sh.getMaxColumns());
     if(sh.getLastColumn()<width)sh.getRange(1,1,1,width).setValues([guardsHeaders_((width-10)/3)]);
-    sh.getRange(row,1,1,width).clearContent();
-    sh.getRange(row,1,1,values.length).setValues([values]);invalidateSheet_(SHEETS.guards);
-    touch_(id,false);return load_(id);
-  }finally{lock.releaseLock();}
+
+    sh.getRange(row,1,1,width).setValues([values.concat(Array(width-values.length).fill(''))]);invalidateSheet_(SHEETS.guards);
+    touch_(id,false);
+  });return load_(id);
 }
-function saveCoverage(token,p){beginRequest_();const id=auth_(token);const required=['affiliation','classification','population','gates','usedGates','coverageType','coverageRange','current','required','risk'];for(const k of required)if(p[k]===undefined||p[k]===null||String(p[k]).trim()==='')throw Error('أكمل جميع حقول التغطية');for(const [k,opt] of [['affiliation',OPTIONS.affiliation],['classification',OPTIONS.classification],['coverageType',OPTIONS.coverageType],['coverageRange',OPTIONS.coverageRange],['risk',OPTIONS.risk]])if(!opt.includes(p[k]))throw Error('قيمة اختيار غير صالحة');for(const k of ['population','gates','usedGates','current','required'])if(!Number.isSafeInteger(Number(p[k]))||Number(p[k])<0)throw Error('الأعداد يجب أن تكون صحيحة وغير سالبة');if(Number(p.usedGates)>Number(p.gates))throw Error('البوابات المستخدمة لا تتجاوز الإجمالي');const lock=LockService.getScriptLock();lock.waitLock(10000);try{clearReadCache_();editable_(id);const r=find_(SHEETS.schools,id),g=find_(SHEETS.guards,id);if(!g)throw Error('أدخل بيانات الحراس أولاً');const guards=guardsFromRow_(g.values),current=Number(p.current),requiredCount=Number(p.required);const values=[id,'تعليم عسير',r.values[3],r.values[2],p.affiliation,p.classification,Number(p.population),Number(p.gates),Number(p.usedGates),p.coverageType,p.coverageRange,current,requiredCount,current>requiredCount?'نعم':'لا',Math.max(0,requiredCount-current),p.risk,guards.company.length,guards.ministry.length,new Date()];upsert_(SHEETS.coverage,id,values);touch_(id,false);return load_(id);}finally{lock.releaseLock();}}
-function approve(token){beginRequest_();const id=auth_(token),lock=LockService.getScriptLock();lock.waitLock(10000);try{clearReadCache_();editable_(id);const s=find_(SHEETS.schools,id),g=find_(SHEETS.guards,id),c=find_(SHEETS.coverage,id);if(!s||!g||!c||!s.values.slice(9,13).every(Boolean))throw Error('يجب إكمال المراحل الثلاث قبل الاعتماد');touch_(id,true);return load_(id);}finally{lock.releaseLock();}}
+function saveCoverage(token,p){beginRequest_();const id=auth_(token);const required=['affiliation','classification','population','gates','usedGates','coverageType','coverageRange','current','required','risk'];for(const k of required)if(p[k]===undefined||p[k]===null||String(p[k]).trim()==='')throw Error('أكمل جميع حقول التغطية');for(const [k,opt] of [['affiliation',OPTIONS.affiliation],['classification',OPTIONS.classification],['coverageType',OPTIONS.coverageType],['coverageRange',OPTIONS.coverageRange],['risk',OPTIONS.risk]])if(!opt.includes(p[k]))throw Error('قيمة اختيار غير صالحة');for(const k of ['population','gates','usedGates','current','required'])if(!Number.isSafeInteger(Number(p[k]))||Number(p[k])<0)throw Error('الأعداد يجب أن تكون صحيحة وغير سالبة');if(Number(p.usedGates)>Number(p.gates))throw Error('البوابات المستخدمة لا تتجاوز الإجمالي');withWriteLock_(function(){editable_(id);const r=find_(SHEETS.schools,id),g=find_(SHEETS.guards,id);if(!g)throw Error('أدخل بيانات الحراس أولاً');const guards=guardsFromRow_(g.values),current=Number(p.current),requiredCount=Number(p.required);const values=[id,'تعليم عسير',r.values[3],r.values[2],p.affiliation,p.classification,Number(p.population),Number(p.gates),Number(p.usedGates),p.coverageType,p.coverageRange,current,requiredCount,current>requiredCount?'نعم':'لا',Math.max(0,requiredCount-current),p.risk,guards.company.length,guards.ministry.length,new Date()];upsert_(SHEETS.coverage,id,values);touch_(id,false);});return load_(id);}
+function approve(token){beginRequest_();const id=auth_(token);withWriteLock_(function(){editable_(id);const s=find_(SHEETS.schools,id),g=find_(SHEETS.guards,id),c=find_(SHEETS.coverage,id);if(!s||!g||!c||!s.values.slice(9,13).every(Boolean))throw Error('يجب إكمال المراحل الثلاث قبل الاعتماد');touch_(id,true);});return load_(id);}
 function supervisor_(){const user=email_(Session.getActiveUser().getEmail());if(!user)throw Error('تعذر التحقق من حساب المشرف؛ استخدم حساب Google Workspace مؤسسياً');const allowed=records_(SHEETS.settings).some(r=>email_(r.values[0])===user);if(!allowed)throw Error('لا توجد صلاحية مشرف لهذا الحساب');return user;}
 function dashboard(){beginRequest_();supervisor_();const status=new Map(records_(SHEETS.status).map(r=>[r.values[0],r.values]));const schools=records_(SHEETS.schools).map(r=>({id:r.values[0],code:r.values[1],name:r.values[2],governorate:r.values[4],status:(status.get(r.values[0])||[])[1]||'لم يبدأ'}));return {total:schools.length,complete:schools.filter(s=>s.status==='مكتمل').length,schools};}
-function reopen(id){beginRequest_();supervisor_();const lock=LockService.getScriptLock();lock.waitLock(10000);try{if(!find_(SHEETS.schools,String(id)))throw Error('السجل غير موجود');touch_(String(id),false);return dashboard();}finally{lock.releaseLock();}}
+function reopen(id){beginRequest_();supervisor_();withWriteLock_(function(){if(!find_(SHEETS.schools,String(id)))throw Error('السجل غير موجود');touch_(String(id),false);});return dashboard();}
 
 
 /** اختبار الاتصال؛ قراءة فقط ولا يعدل بيانات Google Sheets. */

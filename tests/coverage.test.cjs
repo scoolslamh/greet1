@@ -13,7 +13,8 @@ function backend(){
     guardsFromRow_:()=>({ministry:[{name:'a'}],company:[]}),
     editable_:()=>{},touch_:()=>{},load_:()=>({saved:true}),
     upsert_:(sheet,id,values)=>{saved=values;},
-    LockService:{getScriptLock:()=>({waitLock(){},releaseLock(){}})}
+    SpreadsheetApp:{flush(){}},
+    LockService:{getScriptLock:()=>({tryLock(){return true;},releaseLock(){}})}
   });
   return {ctx,saved:()=>saved};
 }

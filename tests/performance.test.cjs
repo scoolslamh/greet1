@@ -11,7 +11,7 @@ function backend(source=fs.readFileSync('الرمز.js','utf8')){
       setValues:values=>{metrics.writes++;values.forEach((cells,i)=>{tables[key][row+i-1]??=[];cells.forEach((cell,j)=>tables[key][row+i-1][column+j-1]=cell);});}
     })
   };
-  const ctx=vm.createContext({PropertiesService:{getScriptProperties:()=>({getProperty:()=> 'spreadsheet_12345678901234567890'})},SpreadsheetApp:{openById:()=>{metrics.opens++;return {getSheetByName:name=>sheets[name]};}},CacheService:{getScriptCache:()=>({get:()=> 's1',put(){}})},Utilities:{getUuid:()=> 'uuid'},LockService:{getScriptLock:()=>({waitLock(){},releaseLock(){}})}});
+  const ctx=vm.createContext({PropertiesService:{getScriptProperties:()=>({getProperty:()=> 'spreadsheet_12345678901234567890'})},SpreadsheetApp:{flush(){},openById:()=>{metrics.opens++;return {getSheetByName:name=>sheets[name]};}},CacheService:{getScriptCache:()=>({get:()=> 's1',put(){}})},Utilities:{getUuid:()=> 'uuid'},LockService:{getScriptLock:()=>({tryLock(){return true;},releaseLock(){}})}});
   vm.runInContext(source,ctx);ctx.hash_=value=>value;
   return {ctx,metrics,tables};
 }
@@ -32,7 +32,7 @@ test('new requests read external changes and mutations invalidate row indexes',(
 });
 test('lock acquisition refreshes status before allowing a write',()=>{
   const b=backend();b.ctx.find_('المتابعة','s1');
-  b.ctx.LockService.getScriptLock=()=>({waitLock(){b.tables.status[1][1]='مكتمل';},releaseLock(){}});
+  b.ctx.LockService.getScriptLock=()=>({tryLock(){b.tables.status[1][1]='مكتمل';return true;},releaseLock(){}});
   assert.throws(()=>b.ctx.saveSchool('token',{principal:'Changed',mobile:'0500000001',address:'Address',email:'changed@example.edu.sa'}));
   assert.equal(b.metrics.writes,0);
 });
