@@ -1,13 +1,15 @@
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
 
-function backend(source=fs.readFileSync('الرمز.js','utf8')){
+function backend(source=fs.readFileSync(process.env.PERF_BACKEND_PATH||'الرمز.js','utf8')){
   const tables={schools:[['id','code','name'],['s1','123','School','','','','','','','Principal','0500000000','Address','principal@example.edu.sa']],guards:[['id','code','name'],['s1','123','School','','','','',0,0,'']],coverage:[['id'],['s1']],status:[['id','state'],['s1','قيد الاستكمال']]};
   const names={'المدارس':'schools','الحراس':'guards','التغطية الأمنية':'coverage','المتابعة':'status'};
-  const metrics={opens:0,reads:0,writes:0};
+  const metrics={opens:0,reads:0,writes:0,cellsRead:0,searches:0};
   const sheets={};for(const [label,key] of Object.entries(names))sheets[label]={
     getLastRow:()=>tables[key].length,getLastColumn:()=>Math.max(...tables[key].map(row=>row.length)),
     getRange:(row,column,height=1,width=1)=>({
-      getDisplayValues:()=>{metrics.reads++;return Array.from({length:height},(_,i)=>Array.from({length:width},(_,j)=>String(tables[key][row+i-1]?.[column+j-1]??'')));},
+      getDisplayValues:()=>{metrics.reads++;metrics.cellsRead+=height*width;return Array.from({length:height},(_,i)=>Array.from({length:width},(_,j)=>String(tables[key][row+i-1]?.[column+j-1]??'')));},
+      getDisplayValue:()=>String(tables[key][row-1]?.[column-1]??''),
+      createTextFinder:text=>{const finder={matchEntireCell(){return finder;},matchCase(){return finder;},useRegularExpression(){return finder;},findAll(){metrics.searches++;return tables[key].slice(row-1,row-1+height).flatMap((item,i)=>String(item[column-1])===text?[{getRow:()=>row+i}]:[]);}};return finder;},
       setValues:values=>{metrics.writes++;values.forEach((cells,i)=>{tables[key][row+i-1]??=[];cells.forEach((cell,j)=>tables[key][row+i-1][column+j-1]=cell);});}
     })
   };
@@ -15,9 +17,9 @@ function backend(source=fs.readFileSync('الرمز.js','utf8')){
   vm.runInContext(source,ctx);ctx.hash_=value=>value;
   return {ctx,metrics,tables};
 }
-test('login reads each table once and opens the spreadsheet once',()=>{
+test('login reads the code column and only the selected rows, opening the spreadsheet once',()=>{
   const b=backend();assert.equal(b.ctx.loginByCode('123').data.school.id,'s1');
-  assert.equal(b.metrics.opens,1);assert.equal(b.metrics.reads,4);
+  assert.equal(b.metrics.opens,1);assert.equal(b.metrics.reads,5);
 });
 test('save returns freshly written school and status values',()=>{
   const b=backend();const result=b.ctx.saveSchool('token',{principal:'Changed',mobile:'0500000001',address:'New address',email:'changed@example.edu.sa'});

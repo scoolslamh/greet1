@@ -18,17 +18,23 @@ function doGet(e){beginRequest_();
 }
 // Request-local only: no account data or permissions are cached between requests.
 let requestState_;
-function beginRequest_(){requestState_={db:null,sheets:new Map(),records:new Map(),indexes:new Map()};}
+function beginRequest_(){requestState_={db:null,sheets:new Map(),records:new Map(),indexes:new Map(),singleRows:new Map(),timings:{}};}
 function requestStateGet_(){if(!requestState_)beginRequest_();return requestState_;}
-function invalidateSheet_(name){const state=requestStateGet_();state.records.delete(name);state.indexes.delete(name);}
-function clearReadCache_(){const state=requestStateGet_();state.records.clear();state.indexes.clear();}
+function invalidateSheet_(name){const state=requestStateGet_();state.records.delete(name);state.indexes.delete(name);state.singleRows.delete(name);}
+function clearReadCache_(){const state=requestStateGet_();state.records.clear();state.indexes.clear();state.singleRows.clear();}
+function measuredStep_(name,work){const start=Date.now();try{return work();}finally{const stages=requestStateGet_().timings;const item=stages[name]||(stages[name]={ms:0,count:0});item.ms+=Date.now()-start;item.count++;}}
+function logRequestTiming_(action,totalMs){console.log(JSON.stringify({event:'performance',action,totalMs,stages:requestStateGet_().timings}));}
+function rememberRecord_(name,record){const state=requestStateGet_();if(!state.singleRows.has(name))state.singleRows.set(name,new Map());state.singleRows.get(name).set(String(record.values[0]),record);return record;}
+function readRecord_(name,row,id){const sh=sheet_(name);const values=measuredStep_('readRow',()=>sh.getRange(row,1,1,sh.getLastColumn()).getDisplayValues()[0]);if(String(values[0])!==String(id))throw Error('تغير ترتيب السجلات أثناء الطلب؛ أعد المحاولة');return rememberRecord_(name,{row,values});}
+function verifyRecordRow_(name,id,row){if(String(sheet_(name).getRange(row,1).getDisplayValue())!==String(id))throw Error('تغير ترتيب السجلات أثناء الحفظ؛ أعد فتح السجل والمحاولة');}
+function saveStepResponse_(id,payload,patch){return payload&&payload.__compact===true?{saved:true,patch:Object.assign({status:'قيد الاستكمال'},patch)}:load_(id);}
 function db_(){
   const state=requestStateGet_();if(state.db)return state.db;
   const id = PropertiesService.getScriptProperties().getProperty('SPREADSHEET_ID');
   if (!id || !/^[A-Za-z0-9_-]{20,}$/.test(id.trim())) {
     throw new Error('خاصية SPREADSHEET_ID غير مضبوطة بصورة صحيحة في إعدادات Apps Script');
   }
-  return state.db=SpreadsheetApp.openById(id.trim());
+  return state.db=measuredStep_('openSpreadsheet',()=>SpreadsheetApp.openById(id.trim()));
 }
 function sheet_(name){const state=requestStateGet_();if(state.sheets.has(name))return state.sheets.get(name);const s=db_().getSheetByName(name);if(!s)throw Error('الورقة غير موجودة: '+name);state.sheets.set(name,s);return s;}
 function setup(){beginRequest_();const specs=[[SHEETS.schools,SCHOOL_HEADERS],[SHEETS.guards,GUARD_HEADERS],[SHEETS.coverage,COVER_HEADERS],[SHEETS.status,STATUS_HEADERS],[SHEETS.settings,SETTING_HEADERS]];for(const [name,headers] of specs){let s=db_().getSheetByName(name)||db_().insertSheet(name);if(s.getLastRow()===0){s.getRange(1,1,1,headers.length).setValues([headers]);s.setFrozenRows(1);s.getRange(1,1,1,headers.length).setBackground('#087b69').setFontColor('#ffffff').setFontWeight('bold');}s.setRightToLeft(true);}return 'تم تجهيز الأوراق. انسخ بيانات المدارس وفق رؤوس الأعمدة المحددة.';}
@@ -39,17 +45,30 @@ function records_(name){
   state.records.set(name,rows);return rows;
 }
 function find_(name,id){
-  const state=requestStateGet_();if(!state.indexes.has(name)){const index=new Map();for(const row of records_(name))if(!index.has(row.values[0]))index.set(row.values[0],row);state.indexes.set(name,index);}
-  return state.indexes.get(name).get(id);
+  const state=requestStateGet_(),key=String(id),cached=state.singleRows.get(name);if(cached&&cached.has(key))return cached.get(key);
+  const sh=sheet_(name),last=sh.getLastRow();if(last<2)return undefined;
+  const matches=measuredStep_('findId',()=>sh.getRange(2,1,last-1,1).createTextFinder(key).matchEntireCell(true).matchCase(true).useRegularExpression(false).findAll());
+  if(matches.length>1)throw Error('معرف السجل مكرر في ورقة '+name+'؛ راجع المشرف');
+  if(!matches.length)return undefined;
+  return readRecord_(name,matches[0].getRow(),key);
 }
 function upsert_(name,id,values){
   const s=sheet_(name),r=find_(name,id);
   const row=r?r.row:Math.max(2,s.getLastRow()+1);
-  s.getRange(row,1,1,values.length).setValues([values]);invalidateSheet_(name);
+  if(r)verifyRecordRow_(name,id,row);measuredStep_('writeRow',()=>s.getRange(row,1,1,values.length).setValues([values]));invalidateSheet_(name);
 }
 function normalizeCode_(v){return String(v||'').trim().toUpperCase().replace(/[\u0660-\u0669]/g,c=>String(c.charCodeAt(0)-1632)).replace(/[\u06F0-\u06F9]/g,c=>String(c.charCodeAt(0)-1776)).replace(/\s+/g,'');}
 function splitCodes_(v){return String(v||'').split(/\s*[-–—,،;؛\n]+\s*/).map(normalizeCode_).filter(Boolean);}
-function schoolByCode_(code){const needle=normalizeCode_(code);if(!/^[A-Z0-9]{2,30}$/.test(needle))throw Error('الرقم الوزاري غير صالح');const found=records_(SHEETS.schools).filter(r=>splitCodes_(r.values[1]).includes(needle));if(found.length!==1)throw Error(found.length?'الرقم مرتبط بأكثر من سجل؛ تواصل مع المشرف':'لم يُعثر على الرقم الوزاري');return found[0];}
+function schoolByCode_(code){
+  const needle=normalizeCode_(code);if(!/^[A-Z0-9]{2,30}$/.test(needle))throw Error('الرقم الوزاري غير صالح');
+  const sh=sheet_(SHEETS.schools),last=sh.getLastRow();
+  const codes=last<2?[]:measuredStep_('readMinisterialCodes',()=>sh.getRange(2,2,last-1,1).getDisplayValues());
+  const rows=[];codes.forEach((row,i)=>{if(splitCodes_(row[0]).includes(needle))rows.push(i+2);});
+  if(rows.length!==1)throw Error(rows.length?'الرقم مرتبط بأكثر من سجل؛ تواصل مع المشرف':'لم يُعثر على الرقم الوزاري');
+  const row=rows[0],values=measuredStep_('readRow',()=>sh.getRange(row,1,1,sh.getLastColumn()).getDisplayValues()[0]);
+  if(!splitCodes_(values[1]).includes(needle))throw Error('تغير ترتيب السجلات أثناء الدخول؛ أعد المحاولة');
+  return rememberRecord_(SHEETS.schools,{row,values});
+}
 function email_(v){return String(v||'').trim().toLowerCase();}
 function phone_(v){return /^(?:\+?9665|05)\d{8}$/.test(String(v||'').trim());}
 function isEmail_(v){return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email_(v));}
@@ -98,13 +117,13 @@ function load_(id){
 function getData(token){beginRequest_();return load_(auth_(token));}
 function withWriteLock_(work){
   const lock=LockService.getScriptLock();
-  if(!lock.tryLock(25000))throw Error('النظام مشغول حالياً بحفظ طلبات أخرى. لم يبدأ حفظ هذا الطلب؛ حاول مجدداً بعد قليل.');
-  try{clearReadCache_();return work();}
-  finally{try{SpreadsheetApp.flush();}finally{lock.releaseLock();}}
+  if(!measuredStep_('lockWait',()=>lock.tryLock(25000)))throw Error('النظام مشغول حالياً بحفظ طلبات أخرى. لم يبدأ حفظ هذا الطلب؛ حاول مجدداً بعد قليل.');
+  try{clearReadCache_();return measuredStep_('lockedWork',work);}
+  finally{try{measuredStep_('flush',()=>SpreadsheetApp.flush());}finally{lock.releaseLock();}}
 }
 function editable_(id){const st=find_(SHEETS.status,id);if(st&&st.values[1]==='مكتمل')throw Error('السجل معتمد؛ تواصل مع المشرف لإعادة فتحه');}
 function touch_(id,complete){const old=find_(SHEETS.status,id),now=new Date();upsert_(SHEETS.status,id,[id,complete?'مكتمل':'قيد الاستكمال',now,complete?now:(old?old.values[3]:'')]);}
-function saveSchool(token,p){beginRequest_();const id=auth_(token);if(!p||!isEmail_(p.email)||!phone_(p.mobile)||!String(p.principal||'').trim()||!String(p.address||'').trim())throw Error('تحقق من اسم المدير والجوال والعنوان والبريد');withWriteLock_(function(){editable_(id);const r=find_(SHEETS.schools,id);const v=r.values.slice(0,13);v[9]=String(p.principal).trim().slice(0,150);v[10]=String(p.mobile).trim();v[11]=String(p.address).trim().slice(0,500);v[12]=email_(p.email);sheet_(SHEETS.schools).getRange(r.row,1,1,13).setValues([v]);invalidateSheet_(SHEETS.schools);touch_(id,false);});return load_(id);}
+function saveSchool(token,p){beginRequest_();const id=auth_(token);if(!p||!isEmail_(p.email)||!phone_(p.mobile)||!String(p.principal||'').trim()||!String(p.address||'').trim())throw Error('تحقق من اسم المدير والجوال والعنوان والبريد');let savedSchool;withWriteLock_(function(){editable_(id);const r=find_(SHEETS.schools,id);const v=r.values.slice(0,13);v[9]=String(p.principal).trim().slice(0,150);v[10]=String(p.mobile).trim();v[11]=String(p.address).trim().slice(0,500);v[12]=email_(p.email);verifyRecordRow_(SHEETS.schools,id,r.row);measuredStep_('writeRow',()=>sheet_(SHEETS.schools).getRange(r.row,1,1,13).setValues([v]));savedSchool={principal:v[9],mobile:v[10],address:v[11],email:v[12]};invalidateSheet_(SHEETS.schools);touch_(id,false);});return saveStepResponse_(id,p,{school:savedSchool});}
 function validateGuards_(arr){if(!Array.isArray(arr)||arr.length>50)throw Error('عدد الحراس غير صالح');return arr.map(g=>{const name=String(g.name||'').trim(),mobile=String(g.mobile||'').trim();if(!name||name.length>150||!phone_(mobile))throw Error('أكمل اسم كل حارس وجواله بشكل صحيح');return {name,mobile};});}
 function guardsHeaders_(n){
   const h=GUARD_HEADERS.slice();
@@ -161,11 +180,11 @@ function saveGuards(token,p){beginRequest_();
     if(sh.getMaxColumns()<width)sh.insertColumnsAfter(sh.getMaxColumns(),width-sh.getMaxColumns());
     if(sh.getLastColumn()<width)sh.getRange(1,1,1,width).setValues([guardsHeaders_((width-10)/3)]);
 
-    sh.getRange(row,1,1,width).setValues([values.concat(Array(width-values.length).fill(''))]);invalidateSheet_(SHEETS.guards);
+    if(old)verifyRecordRow_(SHEETS.guards,id,row);measuredStep_('writeRow',()=>sh.getRange(row,1,1,width).setValues([values.concat(Array(width-values.length).fill(''))]));invalidateSheet_(SHEETS.guards);
     touch_(id,false);
-  });return load_(id);
+  });return saveStepResponse_(id,p,{guards:{ministry,company}});
 }
-function saveCoverage(token,p){beginRequest_();const id=auth_(token);const required=['affiliation','classification','population','gates','usedGates','coverageType','coverageRange','current','required','risk'];for(const k of required)if(p[k]===undefined||p[k]===null||String(p[k]).trim()==='')throw Error('أكمل جميع حقول التغطية');for(const [k,opt] of [['affiliation',OPTIONS.affiliation],['classification',OPTIONS.classification],['coverageType',OPTIONS.coverageType],['coverageRange',OPTIONS.coverageRange],['risk',OPTIONS.risk]])if(!opt.includes(p[k]))throw Error('قيمة اختيار غير صالحة');for(const k of ['population','gates','usedGates','current','required'])if(!Number.isSafeInteger(Number(p[k]))||Number(p[k])<0)throw Error('الأعداد يجب أن تكون صحيحة وغير سالبة');if(Number(p.usedGates)>Number(p.gates))throw Error('البوابات المستخدمة لا تتجاوز الإجمالي');withWriteLock_(function(){editable_(id);const r=find_(SHEETS.schools,id),g=find_(SHEETS.guards,id);if(!g)throw Error('أدخل بيانات الحراس أولاً');const guards=guardsFromRow_(g.values),current=Number(p.current),requiredCount=Number(p.required);const values=[id,'تعليم عسير',r.values[3],r.values[2],p.affiliation,p.classification,Number(p.population),Number(p.gates),Number(p.usedGates),p.coverageType,p.coverageRange,current,requiredCount,current>requiredCount?'نعم':'لا',Math.max(0,requiredCount-current),p.risk,guards.company.length,guards.ministry.length,new Date()];upsert_(SHEETS.coverage,id,values);touch_(id,false);});return load_(id);}
+function saveCoverage(token,p){beginRequest_();const id=auth_(token);const required=['affiliation','classification','population','gates','usedGates','coverageType','coverageRange','current','required','risk'];for(const k of required)if(p[k]===undefined||p[k]===null||String(p[k]).trim()==='')throw Error('أكمل جميع حقول التغطية');for(const [k,opt] of [['affiliation',OPTIONS.affiliation],['classification',OPTIONS.classification],['coverageType',OPTIONS.coverageType],['coverageRange',OPTIONS.coverageRange],['risk',OPTIONS.risk]])if(!opt.includes(p[k]))throw Error('قيمة اختيار غير صالحة');for(const k of ['population','gates','usedGates','current','required'])if(!Number.isSafeInteger(Number(p[k]))||Number(p[k])<0)throw Error('الأعداد يجب أن تكون صحيحة وغير سالبة');if(Number(p.usedGates)>Number(p.gates))throw Error('البوابات المستخدمة لا تتجاوز الإجمالي');let savedCoverage;withWriteLock_(function(){editable_(id);const r=find_(SHEETS.schools,id),g=find_(SHEETS.guards,id);if(!g)throw Error('أدخل بيانات الحراس أولاً');const guards=guardsFromRow_(g.values),current=Number(p.current),requiredCount=Number(p.required);const values=[id,'تعليم عسير',r.values[3],r.values[2],p.affiliation,p.classification,Number(p.population),Number(p.gates),Number(p.usedGates),p.coverageType,p.coverageRange,current,requiredCount,current>requiredCount?'نعم':'لا',Math.max(0,requiredCount-current),p.risk,guards.company.length,guards.ministry.length,new Date()];upsert_(SHEETS.coverage,id,values);savedCoverage=values.slice(1,18);touch_(id,false);});return saveStepResponse_(id,p,{coverage:savedCoverage});}
 function approve(token){beginRequest_();const id=auth_(token);withWriteLock_(function(){editable_(id);const s=find_(SHEETS.schools,id),g=find_(SHEETS.guards,id),c=find_(SHEETS.coverage,id);if(!s||!g||!c||!s.values.slice(9,13).every(Boolean))throw Error('يجب إكمال المراحل الثلاث قبل الاعتماد');touch_(id,true);});return load_(id);}
 function supervisor_(){const user=email_(Session.getActiveUser().getEmail());if(!user)throw Error('تعذر التحقق من حساب المشرف؛ استخدم حساب Google Workspace مؤسسياً');const allowed=records_(SHEETS.settings).some(r=>email_(r.values[0])===user);if(!allowed)throw Error('لا توجد صلاحية مشرف لهذا الحساب');return user;}
 function dashboard(){beginRequest_();supervisor_();const status=new Map(records_(SHEETS.status).map(r=>[r.values[0],r.values]));const schools=records_(SHEETS.schools).map(r=>({id:r.values[0],code:r.values[1],name:r.values[2],governorate:r.values[4],status:(status.get(r.values[0])||[])[1]||'لم يبدأ'}));return {total:schools.length,complete:schools.filter(s=>s.status==='مكتمل').length,schools};}

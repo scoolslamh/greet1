@@ -5,7 +5,7 @@ function environment(acquired=true){
   const ctx=vm.createContext({LockService:{getScriptLock:()=>lock},SpreadsheetApp:{flush(){assert.ok(held);events.push('flush');}}});
   vm.runInContext(fs.readFileSync(process.env.LOCK_BACKEND_PATH||'الرمز.js','utf8'),ctx);
   const school=['id','123','School','City','Governorate','','','','','Principal','0500000000','Address','example@example.edu.sa'];
-  const sheet={getLastRow:()=>2,getLastColumn:()=>16,getMaxColumns:()=>310,getRange:()=>({getDisplayValue:()=> 'الرقم الوزاري',setValues(values){assert.ok(held);events.push('write');writes.push(values);}})};
+  const sheet={getLastRow:()=>2,getLastColumn:()=>16,getMaxColumns:()=>310,getRange:(row,column)=>({getDisplayValue:()=>row===1&&column===2?'الرقم الوزاري':'id',setValues(values){assert.ok(held);events.push('write');writes.push(values);}})};
   Object.assign(ctx,{auth_:()=> 'id',supervisor_:()=>{},editable_:()=>{assert.ok(held);},find_:()=>({row:2,values:school}),sheet_:()=>sheet,
     guardsFromRow_:()=>({ministry:[],company:[]}),upsert_:()=>{assert.ok(held);events.push('write');},touch_:()=>{assert.ok(held);events.push('status');},
     load_:()=>{assert.equal(held,false);events.push('response');return {saved:true};},dashboard:()=>{assert.equal(held,false);events.push('response');return {saved:true};},

@@ -13,6 +13,7 @@ function apiHealth_() {
 
 function doPost(e) {
   beginRequest_();
+  const requestStarted=Date.now();let action='invalid';
   try {
     const body = e && e.postData && e.postData.contents;
     if (typeof body !== 'string' || body.length > 65536) throw Error('طلب غير صالح');
@@ -36,6 +37,7 @@ function doPost(e) {
     };
     if (typeof request.action !== 'string' || !Object.prototype.hasOwnProperty.call(routes, request.action)) throw Error('العملية غير مسموحة');
     const route = routes[request.action];
+    action=request.action;
     if (!Array.isArray(request.args) || request.args.length !== route.count) throw Error('طلب غير صالح');
     if (request.action === 'loginByCode') {
       if (typeof request.args[0] !== 'string' || request.args[0].length > 100) throw Error('الرقم الوزاري غير صالح');
@@ -46,5 +48,7 @@ function doPost(e) {
     return jsonResponse_({ ok: true, result: route.call.apply(null, request.args) });
   } catch (error) {
     return jsonResponse_({ ok: false, error: error && error.message ? String(error.message) : 'تعذر تنفيذ الطلب' });
+  } finally {
+    if(typeof logRequestTiming_==='function')logRequestTiming_(action,Date.now()-requestStarted);
   }
 }
