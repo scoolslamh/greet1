@@ -81,9 +81,17 @@ function guardsFromRow_(values){
   }
   return {ministry,company};
 }
+function schoolApproval_(status){
+  const raw=sheet_(SHEETS.status).getRange(status.row,4).getValue();
+  if(Object.prototype.toString.call(raw)==='[object Date]'&&Number.isFinite(raw.getTime()))return {date:Utilities.formatDate(raw,'Asia/Riyadh','yyyy/MM/dd'),time:Utilities.formatDate(raw,'Asia/Riyadh','HH:mm')};
+  const display=String(status.values[3]||'').trim();
+  return display?{display}:null;
+}
 function load_(id){
   const r=find_(SHEETS.schools,id);if(!r)throw Error('السجل غير موجود');
-  const g=find_(SHEETS.guards,id),c=find_(SHEETS.coverage,id),st=find_(SHEETS.status,id);
+  const st=find_(SHEETS.status,id);
+  if(st&&st.values[1]==='مكتمل')return {school:{name:r.values[2]},status:'مكتمل',approval:schoolApproval_(st)};
+  const g=find_(SHEETS.guards,id),c=find_(SHEETS.coverage,id);
   const guards=g?guardsFromRow_(g.values):{ministry:[],company:[]};
   return {school:{id,code:r.values[1],name:r.values[2],village:r.values[3],governorate:r.values[4],stage:r.values[5],office:r.values[6],gender:r.values[7],type:r.values[8],principal:r.values[9],mobile:r.values[10],address:r.values[11],email:r.values[12]},guards,coverage:c?c.values.slice(1,18):null,status:st?st.values[1]:'لم يبدأ',options:OPTIONS};
 }
