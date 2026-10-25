@@ -59,7 +59,7 @@ async function exportIncomplete(){
     if(!window.schoolExcel)throw Error('تعذر تحميل أدوات التصدير؛ أعد تحميل الصفحة');
     const token=session,report=await call('exportIncompleteSchools',token);if(session!==token)return;
     if(!report.count){showNotice('لا توجد مدارس غير مكتملة ضمن صلاحياتك للتصدير.',false);return;}
-    window.schoolExcel.download(report);showNotice('تم تجهيز ملف Excel لعدد '+report.count+' من المدارس غير المكتملة.',false);
+    window.schoolExcel.download(report);showNotice('تم تجهيز ملف Excel لعدد '+(report.incompleteCount??report.count)+' من المدارس غير المكتملة.'+(report.reviewCount?' وأُضيفت '+report.reviewCount+' من السجلات دون معرف إلى ورقة «سجلات تحتاج مراجعة».':''),false);
   });
 }
 async function refresh(){await busy(async()=>{const token=session,result=await call('getMonitoring',token);if(session!==token)return;model=result;render();});}

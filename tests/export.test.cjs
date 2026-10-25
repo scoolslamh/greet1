@@ -22,6 +22,19 @@ test('missing assignment column never grants supervisor global export access',()
 });
 function workbook(sheets){const context=vm.createContext({window:{},TextEncoder});const script=fs.readFileSync('ExcelExport.html','utf8').match(/<script>([\s\S]*?)<\/script>/)[1];vm.runInContext(script,context);return context.window.schoolExcel.build(sheets);}
 
+test('missing and whitespace IDs export separately without joining unrelated blank-ID data',()=>{
+  const {ctx,tables}=environment();tables.schools.rows.push(['','Missing','First','1000000001','0501111111'],['  ','Space','First','1000000001','0502222222'],['','Private','Second','1000000002','']);
+  tables.guards.rows.push(['','Unrelated guard','']);const before=JSON.stringify(tables);
+  const result=ctx.exportIncompleteSchools('valid');assert.equal(result.incompleteCount,1);assert.equal(result.reviewCount,2);assert.equal(result.count,3);
+  assert.equal(result.sheets[4].rows.length,2);assert.equal(result.sheets[4].rows[0][1],'Missing');
+  assert.ok(!JSON.stringify(result).includes('Unrelated guard'));assert.ok(!JSON.stringify(result).includes('Private'));assert.equal(JSON.stringify(tables),before);
+});
+
+test('review-only export remains downloadable with no valid incomplete school',()=>{
+  const {ctx,tables}=environment();tables.status.rows[0][1]='مكتمل';tables.schools.rows.push(['','Missing','First','1000000001','']);
+  const result=ctx.exportIncompleteSchools('valid');assert.equal(result.count,1);assert.equal(result.incompleteCount,0);assert.equal(result.sheets[4].rows.length,1);
+});
+
 test('duplicate incomplete tracking rows are preserved without duplicating schools or changing source data',()=>{
   const {ctx,tables}=environment();tables.status.rows.push(['a','قيد الاستكمال','other time',''],['','', 'orphan','']);
   const before=JSON.stringify(tables);const result=ctx.exportIncompleteSchools('valid');

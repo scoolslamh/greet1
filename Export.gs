@@ -22,17 +22,17 @@ function exportIncompleteSchools(token){
     const id=String(row.values[0]||'');if(!id)continue;
     if(!statusById.has(id)||row.values[1]==='مكتمل')statusById.set(id,row.values);
   }
-  const selected=[],ids=new Set();
+  const selected=[],unidentified=[],ids=new Set();
   for(const row of schools.records){
     if(!manager&&monitoringCivil_(row.values[civilColumns[0]])!==account.civil)continue;
     const id=String(row.values[0]||'');
-    if(!id)throw Error('يوجد سجل مدرسة دون معرف؛ راجع البيانات قبل التصدير');
+    if(!id.trim()){unidentified.push(row.values);continue;}
     if(ids.has(id))throw Error('يوجد معرف مدرسة مكرر؛ راجع البيانات قبل التصدير');
     const status=statusById.get(id);
     if(status&&status[1]==='مكتمل')continue;
     ids.add(id);selected.push(row.values);
   }
-  if(!selected.length)return {count:0,sheets:[]};
+  if(!selected.length&&!unidentified.length)return {count:0,sheets:[]};
   const pad=(row,width)=>Array.from({length:width},(_,i)=>String(row[i]??''));
   const result=[{name:'المدارس',headers:schools.headers.concat(['حالة الاستكمال']),rows:selected.map(row=>pad(row,schools.headers.length).concat([(statusById.get(String(row[0]))||[])[1]||'لم يبدأ']))}];
   for(const name of [SHEETS.guards,SHEETS.coverage]){
@@ -42,5 +42,6 @@ function exportIncompleteSchools(token){
   const trackingRows=statuses.records.filter(row=>ids.has(String(row.values[0]))).map(row=>pad(row.values,statuses.headers.length));
   for(const row of selected)if(!statusById.has(String(row[0])))trackingRows.push(pad([row[0],'لم يبدأ'],statuses.headers.length));
   result.push({name:'المتابعة',headers:statuses.headers,rows:trackingRows});
-  return {count:selected.length,sheets:result,generatedAt:Utilities.formatDate(new Date(),'Asia/Riyadh','yyyyMMdd-HHmm')};
+  if(unidentified.length)result.push({name:'سجلات تحتاج مراجعة',headers:schools.headers.concat(['سبب المراجعة']),rows:unidentified.map(row=>pad(row,schools.headers.length).concat(['معرف السجل مفقود؛ تعذر تحديد حالة الاستكمال وربط البيانات']))});
+  return {count:selected.length+unidentified.length,incompleteCount:selected.length,reviewCount:unidentified.length,sheets:result,generatedAt:Utilities.formatDate(new Date(),'Asia/Riyadh','yyyyMMdd-HHmm')};
 }
