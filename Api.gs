@@ -26,6 +26,7 @@ function doPost(e) {
       health: { count: 0, call: apiHealth_ },
       loginSupervisor: { count: 1, call: loginSupervisor },
       getMonitoring: { count: 1, call: getMonitoring },
+      exportIncompleteSchools: { count: 1, call: exportIncompleteSchools },
       logoutSupervisor: { count: 1, call: logoutSupervisor },
       reopenSchool: { count: 2, call: reopenSchool },
       loginByCode: { count: 1, call: loginByCode },

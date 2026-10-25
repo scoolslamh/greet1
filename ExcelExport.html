@@ -1,0 +1,44 @@
+<script>
+(function(){
+  'use strict';
+  const encoder=new TextEncoder();
+  const xml=value=>String(value??'').replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g,'').replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&apos;'}[char]));
+  const crcTable=Array.from({length:256},(_,n)=>{for(let i=0;i<8;i++)n=n&1?0xedb88320^(n>>>1):n>>>1;return n>>>0;});
+  function crc32(bytes){let crc=0xffffffff;for(const byte of bytes)crc=crcTable[(crc^byte)&255]^(crc>>>8);return (crc^0xffffffff)>>>0;}
+  function zip(entries){
+    const pieces=[],central=[];let offset=0,centralSize=0;
+    for(const [name,text] of entries){
+      const filename=encoder.encode(name),data=encoder.encode(text),crc=crc32(data),header=new Uint8Array(30),view=new DataView(header.buffer);
+      view.setUint32(0,0x04034b50,true);view.setUint16(4,20,true);view.setUint16(12,33,true);view.setUint32(14,crc,true);view.setUint32(18,data.length,true);view.setUint32(22,data.length,true);view.setUint16(26,filename.length,true);
+      pieces.push(header,filename,data);
+      const directory=new Uint8Array(46),dv=new DataView(directory.buffer);dv.setUint32(0,0x02014b50,true);dv.setUint16(4,20,true);dv.setUint16(6,20,true);dv.setUint16(14,33,true);dv.setUint32(16,crc,true);dv.setUint32(20,data.length,true);dv.setUint32(24,data.length,true);dv.setUint16(28,filename.length,true);dv.setUint32(42,offset,true);
+      central.push(directory,filename);centralSize+=46+filename.length;offset+=30+filename.length+data.length;
+    }
+    const end=new Uint8Array(22),ev=new DataView(end.buffer);ev.setUint32(0,0x06054b50,true);ev.setUint16(8,entries.length,true);ev.setUint16(10,entries.length,true);ev.setUint32(12,centralSize,true);ev.setUint32(16,offset,true);
+    const output=new Uint8Array(offset+centralSize+22);let position=0;for(const part of [...pieces,...central,end]){output.set(part,position);position+=part.length;}return output;
+  }
+  function column(index){let result='';for(index++;index>0;index=Math.floor((index-1)/26))result=String.fromCharCode(65+(index-1)%26)+result;return result;}
+  function worksheet(sheet){
+    if(!sheet.headers.length||sheet.headers.length>16384||sheet.rows.length>1048575)throw Error('يتجاوز التقرير حدود ورقة Excel');
+    const all=[sheet.headers,...sheet.rows],last=column(sheet.headers.length-1)+(sheet.rows.length+1);
+    const rows=all.map((row,i)=>'<row r="'+(i+1)+'">'+sheet.headers.map((_,j)=>{
+      const value=String(row[j]??'');if(value.length>32767)throw Error('توجد قيمة تتجاوز الحد المسموح لخلية Excel');
+      if(value===''&&i!==0)return '';
+      return '<c r="'+column(j)+(i+1)+'" t="inlineStr"'+(i===0?' s="1"':'')+'><is><t xml:space="preserve">'+xml(value)+'</t></is></c>';
+    }).join('')+'</row>').join('');
+    return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><dimension ref="A1:'+last+'"/><sheetViews><sheetView workbookViewId="0" rightToLeft="1"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><sheetFormatPr defaultRowHeight="20"/><cols>'+sheet.headers.map((header,i)=>'<col min="'+(i+1)+'" max="'+(i+1)+'" width="'+(/اسم المدرسة|العنوان/.test(header)?42:24)+'" customWidth="1"/>').join('')+'</cols><sheetData>'+rows+'</sheetData><autoFilter ref="A1:'+last+'"/></worksheet>';
+  }
+  function build(sheets){
+    if(!Array.isArray(sheets)||!sheets.length)throw Error('لا توجد بيانات للتصدير');
+    const prefix='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
+    const entries=[['[Content_Types].xml',prefix+'<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>'+sheets.map((_,i)=>'<Override PartName="/xl/worksheets/sheet'+(i+1)+'.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>').join('')+'</Types>'],
+      ['_rels/.rels',prefix+'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>'],
+      ['xl/workbook.xml',prefix+'<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><bookViews><workbookView/></bookViews><sheets>'+sheets.map((sheet,i)=>'<sheet name="'+xml(sheet.name)+'" sheetId="'+(i+1)+'" r:id="rId'+(i+1)+'"/>').join('')+'</sheets></workbook>'],
+      ['xl/_rels/workbook.xml.rels',prefix+'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'+sheets.map((_,i)=>'<Relationship Id="rId'+(i+1)+'" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet'+(i+1)+'.xml"/>').join('')+'<Relationship Id="rId'+(sheets.length+1)+'" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>'],
+      ['xl/styles.xml',prefix+'<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/><name val="Tahoma"/></font><font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Tahoma"/></font></fonts><fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF087B69"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="1"><border/></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="2"><xf numFmtId="49" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"><alignment horizontal="right" vertical="center"/></xf><xf numFmtId="49" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"><alignment horizontal="right" vertical="center" wrapText="1"/></xf></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>']];
+    sheets.forEach((sheet,i)=>entries.push(['xl/worksheets/sheet'+(i+1)+'.xml',worksheet(sheet)]));return zip(entries);
+  }
+  function download(report){const bytes=build(report.sheets),blob=new Blob([bytes],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}),url=URL.createObjectURL(blob),anchor=document.createElement('a');anchor.href=url;anchor.download='المدارس غير المكتملة-'+(report.generatedAt||'report')+'.xlsx';document.body.appendChild(anchor);anchor.click();anchor.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);}
+  window.schoolExcel={build,download};
+}());
+</script>
