@@ -21,6 +21,27 @@ test('missing assignment column never grants supervisor global export access',()
   const {ctx,tables}=environment();tables.schools.headers[3]='Different';assert.throws(()=>ctx.exportIncompleteSchools('valid'));
 });
 function workbook(sheets){const context=vm.createContext({window:{},TextEncoder});const script=fs.readFileSync('ExcelExport.html','utf8').match(/<script>([\s\S]*?)<\/script>/)[1];vm.runInContext(script,context);return context.window.schoolExcel.build(sheets);}
+
+test('duplicate incomplete tracking rows are preserved without duplicating schools or changing source data',()=>{
+  const {ctx,tables}=environment();tables.status.rows.push(['a','قيد الاستكمال','other time',''],['','', 'orphan','']);
+  const before=JSON.stringify(tables);const result=ctx.exportIncompleteSchools('valid');
+  assert.equal(result.count,1);assert.equal(result.sheets[0].rows.length,1);
+  assert.equal(result.sheets[3].rows.length,2);assert.equal(JSON.stringify(tables),before);
+});
+
+test('any completed tracking row excludes the school regardless of duplicate row order',()=>{
+  for(const prepend of [true,false]){
+    const {ctx,tables}=environment();const row=['a','مكتمل','time','date'];
+    if(prepend)tables.status.rows.unshift(row);else tables.status.rows.push(row);
+    assert.equal(ctx.exportIncompleteSchools('valid').count,0);
+  }
+});
+
+test('duplicates outside supervisor scope never block or leak into export',()=>{
+  const {ctx,tables}=environment();tables.status.rows.push(['c','قيد الاستكمال','','']);
+  const result=ctx.exportIncompleteSchools('valid');assert.equal(result.count,1);
+  for(const sheet of result.sheets)assert.ok(sheet.rows.every(row=>row[0]==='a'));
+});
 test('Excel output is a real ZIP workbook with RTL, frozen headings and safe text cells',()=>{
   const bytes=workbook([{name:'المدارس',headers:['الرقم الوزاري','الجوال','الاسم'],rows:[['M123','0500000000','=HYPERLINK("x")']]}]);
   const data=Buffer.from(bytes);assert.equal(data.readUInt32LE(0),0x04034b50);const text=data.toString('utf8');assert.ok(text.includes('xl/workbook.xml'));assert.ok(text.includes('rightToLeft="1"'));assert.ok(text.includes('state="frozen"'));assert.ok(text.includes('0500000000'));assert.ok(!text.includes('<f>'));assert.ok(text.includes('=HYPERLINK(&quot;x&quot;)'));

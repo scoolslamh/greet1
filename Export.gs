@@ -16,7 +16,12 @@ function exportIncompleteSchools(token){
   if(idColumn!==0)throw Error('تحقق من عمود معرف السجل في ورقة المدارس');
   if(!manager&&civilColumns.length!==1)throw Error('يلزم عمود واحد باسم السجل المدني في ورقة المدارس لتحديد مدارس المشرف');
   const statusById=new Map();
-  for(const row of statuses.records){const id=String(row.values[0]||'');if(statusById.has(id))throw Error('يوجد معرف مكرر في ورقة المتابعة؛ راجع البيانات قبل التصدير');statusById.set(id,row.values);}
+  // Duplicate tracking rows must not block export or expose an approved school.
+  // Preserve all original rows below; a completed row takes precedence for filtering.
+  for(const row of statuses.records){
+    const id=String(row.values[0]||'');if(!id)continue;
+    if(!statusById.has(id)||row.values[1]==='مكتمل')statusById.set(id,row.values);
+  }
   const selected=[],ids=new Set();
   for(const row of schools.records){
     if(!manager&&monitoringCivil_(row.values[civilColumns[0]])!==account.civil)continue;
@@ -34,6 +39,8 @@ function exportIncompleteSchools(token){
     const table=exportTable_(name);
     result.push({name,headers:table.headers,rows:table.records.filter(row=>ids.has(String(row.values[0]))).map(row=>pad(row.values,table.headers.length))});
   }
-  result.push({name:'المتابعة',headers:statuses.headers,rows:selected.map(row=>pad(statusById.get(String(row[0]))||[row[0],'لم يبدأ'],statuses.headers.length))});
+  const trackingRows=statuses.records.filter(row=>ids.has(String(row.values[0]))).map(row=>pad(row.values,statuses.headers.length));
+  for(const row of selected)if(!statusById.has(String(row[0])))trackingRows.push(pad([row[0],'لم يبدأ'],statuses.headers.length));
+  result.push({name:'المتابعة',headers:statuses.headers,rows:trackingRows});
   return {count:selected.length,sheets:result,generatedAt:Utilities.formatDate(new Date(),'Asia/Riyadh','yyyyMMdd-HHmm')};
 }
