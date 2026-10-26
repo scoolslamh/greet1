@@ -70,7 +70,10 @@ function schoolByCode_(code){
   return rememberRecord_(SHEETS.schools,{row,values});
 }
 function email_(v){return String(v||'').trim().toLowerCase();}
-function phone_(v){return /^(?:\+?9665|05)\d{8}$/.test(String(v||'').trim());}
+function normalizePhone_(value){
+  return String(value??'').replace(/[\u0660-\u0669]/g,c=>String(c.charCodeAt(0)-1632)).replace(/[\u06f0-\u06f9]/g,c=>String(c.charCodeAt(0)-1776)).replace(/[\s\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069\-\u2010-\u2015]/g,'').replace(/^00966/,'+966');
+}
+function phone_(v){return /^(?:\+?9665|05)\d{8}$/.test(normalizePhone_(v));}
 function isEmail_(v){return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email_(v));}
 function hash_(v){return Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256,v).map(b=>('0'+(b&255).toString(16)).slice(-2)).join('');}
 function tokenKey_(token){return 'session_'+hash_(token);}
@@ -124,7 +127,7 @@ function withWriteLock_(work){
 function editable_(id){const st=find_(SHEETS.status,id);if(st&&st.values[1]==='مكتمل')throw Error('السجل معتمد؛ تواصل مع المشرف لإعادة فتحه');}
 function touch_(id,complete){const old=find_(SHEETS.status,id),now=new Date();upsert_(SHEETS.status,id,[id,complete?'مكتمل':'قيد الاستكمال',now,complete?now:(old?old.values[3]:'')]);}
 function saveSchool(token,p){beginRequest_();const id=auth_(token);if(!p||!isEmail_(p.email)||!phone_(p.mobile)||!String(p.principal||'').trim()||!String(p.address||'').trim())throw Error('تحقق من اسم المدير والجوال والعنوان والبريد');let savedSchool;withWriteLock_(function(){editable_(id);const r=find_(SHEETS.schools,id);const v=r.values.slice(0,13);v[9]=String(p.principal).trim().slice(0,150);v[10]=String(p.mobile).trim();v[11]=String(p.address).trim().slice(0,500);v[12]=email_(p.email);verifyRecordRow_(SHEETS.schools,id,r.row);measuredStep_('writeRow',()=>sheet_(SHEETS.schools).getRange(r.row,1,1,13).setValues([v]));savedSchool={principal:v[9],mobile:v[10],address:v[11],email:v[12]};invalidateSheet_(SHEETS.schools);touch_(id,false);});return saveStepResponse_(id,p,{school:savedSchool});}
-function validateGuards_(arr){if(!Array.isArray(arr)||arr.length>50)throw Error('عدد الحراس غير صالح');return arr.map(g=>{const name=String(g.name||'').trim(),mobile=String(g.mobile||'').trim();if(!name||name.length>150||!phone_(mobile))throw Error('أكمل اسم كل حارس وجواله بشكل صحيح');return {name,mobile};});}
+function validateGuards_(arr){if(!Array.isArray(arr)||arr.length>50)throw Error('عدد الحراس غير صالح');return arr.map(g=>{const name=String(g.name||'').trim(),mobile=normalizePhone_(g.mobile);if(!name||name.length>150||!phone_(mobile))throw Error('أكمل اسم كل حارس وجواله بشكل صحيح');return {name,mobile};});}
 function guardsHeaders_(n){
   const h=GUARD_HEADERS.slice();
   for(let i=1;i<=n;i++)h.push('اسم الحارس '+i,'جوال الحارس '+i,'الوظيفة '+i);

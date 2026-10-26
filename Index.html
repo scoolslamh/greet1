@@ -31,7 +31,10 @@ function validateFields(errors){
   const first=$(entries[0][0]);if(first)first.focus();
   throw Error(entries[0][1]);
 }
-function validPhone(value){return /^(?:\+?9665|05)\d{8}$/.test(value);}
+function normalizePhone(value){
+  return String(value??'').replace(/[\u0660-\u0669]/g,c=>String(c.charCodeAt(0)-1632)).replace(/[\u06f0-\u06f9]/g,c=>String(c.charCodeAt(0)-1776)).replace(/[\s\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069\-\u2010-\u2015]/g,'').replace(/^00966/,'+966');
+}
+function validPhone(value){return /^(?:\+?9665|05)\d{8}$/.test(normalizePhone(value));}
 function validateSchoolForm(){
   const errors={};
   if(!val('principal'))errors.principal='أدخل اسم مدير المدرسة';
