@@ -5,7 +5,7 @@ const GUARD_HEADERS=['معرف السجل','الرقم الوزاري','اسم �
 const COVER_HEADERS=['معرف السجل','منطقة التعليم','المدينة','اسم المدرسة','تبعية المدرسة','تصنيف المدرسة','الكثافة البشرية للمدرسة','عدد البوابات الإجمالي','البوابات المستخدمة للدخول والخروج','نوع التغطية','مدى التغطية','عدد أفراد التغطية الحالي','إجمالي أفراد التغطية اللازم لمدى التغطية','هل يوجد فائض أفراد؟','العجز','خطورة المدرسة','عدد البوابين الحاليين (تطوير)','عدد الحراس (الوزارة)','آخر تحديث'];
 const STATUS_HEADERS=['معرف السجل','الحالة','آخر تحديث','تاريخ الاعتماد'];
 const SETTING_HEADERS=['بريد المشرف'];
-const OPTIONS={affiliation:['حكومي','أهلي','أخرى'],classification:['روضة','ابتدائي','متوسط','ثانوي','طفولة مبكرة','مجمع','أخرى'],coverageType:['بوابين تطوير','حراس الوزارة','كلاهما'],coverageRange:['على مدار اليوم','جزئية ٨ ساعات'],risk:['منخفضة','متوسطة','عالية']};
+const OPTIONS={affiliation:['حكومي','أهلي','أخرى'],classification:['روضة','ابتدائي','متوسط','ثانوي','طفولة مبكرة','مجمع','أخرى'],coverageType:['بوابين تطوير','حراس الوزارة','كلاهما','مدمجة مع مدرسة أخرى'],coverageRange:['على مدار اليوم','جزئية ٨ ساعات'],risk:['منخفضة','متوسطة','عالية']};
 function doGet(e){beginRequest_();
   if(e&&e.parameter&&(e.parameter.monitor==='1'||e.parameter.admin==='1'))return HtmlService.createHtmlOutputFromFile('Monitor').append(HtmlService.createHtmlOutputFromFile('ExcelExport').getContent()).setTitle('متابعة المدارس').addMetaTag('viewport','width=device-width,initial-scale=1');
   if(e&&e.parameter&&e.parameter.api==='health'){
